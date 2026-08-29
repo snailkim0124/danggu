@@ -43,6 +43,21 @@
  * and draw dies out with distance. `d` resets at every collision, since a
  * collision leaves the ball sliding again.
  *
+ * ## Kiss risk (의도치 않은 공-공 2차 충돌)
+ *
+ * A struck ball is otherwise treated as a stationary obstacle for the rest of
+ * the stroke (see above) — but it does leave along the line connecting the
+ * two centres at contact (the same `n` already computed for the cue ball's
+ * own deflection, ignoring throw), and that line can run close to a ball
+ * nobody was aiming at. This is not modelled as an actual second collision
+ * (that would require moving the struck ball, which the engine deliberately
+ * doesn't do); instead it is a soft signal: for every ball not involved in a
+ * given contact, `kissRiskMultiplier` discounts confidence continuously the
+ * closer that ball sits to the struck ball's projected line, from `1` when
+ * safely clear down to `cfg.kissMinMultiplier` (never 0 — a soft down-rank,
+ * not a hard filter) once the line passes dead-on through it. It never
+ * affects `ruleValid`/`foul`.
+ *
  * ## Cushion model
  *
  * First-order mirror reflection (angle of incidence = angle of reflection).
@@ -137,6 +152,10 @@ export interface SimulationResult {
    * distance. `0` for a scoring shot. Drives the near-miss fallback.
    */
   missDistanceMm: number;
+  /** Cumulative kiss-risk confidence multiplier (product over every ball-ball
+   * contact in the stroke) — see the module doc's "Kiss risk" section. `1`
+   * when no struck ball's projected path passes close to another ball. */
+  kissRiskMultiplier: number;
 }
 
 /**
@@ -159,6 +178,20 @@ export function spinVelocityAfter(
 ): number {
   const nr = cfg.naturalRollSpin;
   return nr + (initial - nr) * Math.exp(-distanceMm / cfg.slidingLengthMm);
+}
+
+/**
+ * Confidence multiplier for one struck-ball-vs-other-ball clearance — `1`
+ * when safely clear (`≥ contactDist + cfg.kissMarginMm`), linearly tapering
+ * to `cfg.kissMinMultiplier` at or inside actual contact distance. See the
+ * module doc's "Kiss risk" section.
+ */
+function kissConfidenceFactor(clearanceMm: number, contactDist: number, cfg: PathCalcConfig): number {
+  const safeDist = contactDist + cfg.kissMarginMm;
+  if (clearanceMm >= safeDist) return 1;
+  if (clearanceMm <= contactDist) return cfg.kissMinMultiplier;
+  const t = (clearanceMm - contactDist) / (safeDist - contactDist);
+  return cfg.kissMinMultiplier + t * (1 - cfg.kissMinMultiplier);
 }
 
 /** Mirror reflection off a cushion, plus the tangential kick from side spin. */
@@ -221,6 +254,7 @@ export function simulateShot(
   let travelled = 0;
   let effortMm = 0;
   let effortAtScoreMm = -1;
+  let kissRiskMultiplier = 1;
 
   for (let iter = 0; iter < cfg.maxEvents && remainingMm > cfg.minSegmentMm; iter++) {
     // A just-contacted ball becomes eligible again once the cue ball has
@@ -304,6 +338,18 @@ export function simulateShot(
         firstThickness = thickness;
         firstContactDistanceMm = travelled;
         cushionsAtFirstBallContact = cushionsTotal;
+      }
+
+      // Kiss risk: `n` is also the direction the struck ball itself leaves
+      // along (line of centres, ignoring throw) — check how close that
+      // projected line passes to every OTHER ball not involved in this
+      // contact, using their recognised (frozen) positions, same
+      // stationary-obstacle approximation the rest of the engine already
+      // relies on. See the module doc's "Kiss risk" section.
+      for (const other of others) {
+        if (other.id === hitBall.id) continue;
+        const clearance = closestApproachToPoint(hitBall.position, n, Infinity, other.position);
+        kissRiskMultiplier *= kissConfidenceFactor(clearance, contactDist, cfg);
       }
 
       const alreadyScored = redsContacted.length >= 2;
@@ -391,6 +437,7 @@ export function simulateShot(
     firstThickness,
     firstContactDistanceMm,
     missDistanceMm,
+    kissRiskMultiplier,
   };
 }
 

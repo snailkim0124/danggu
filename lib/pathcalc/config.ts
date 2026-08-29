@@ -118,6 +118,21 @@ export interface PathCalcConfig {
    * how much of the model is approximation rather than geometry. */
   techniqueFidelity: Record<ShotTechnique, number>;
 
+  // --- kiss risk (의도치 않은 공-공 2차 충돌) --------------------------------
+  /**
+   * Grey-zone width (mm) beyond exact contact distance (`2 × ballRadiusMm`)
+   * used to taper the kiss-risk confidence penalty to zero — see
+   * `lib/pathcalc/simulate.ts`'s module doc for the full model. Tuned
+   * qualitatively, not measured, same as `THIN_CUT_MAX_THICKNESS` and friends
+   * in `candidates.ts` — deliberately NOT reusing `recognitionErrorMm` (a much
+   * narrower camera-error figure with a different meaning) as this margin.
+   */
+  kissMarginMm: number;
+  /** Confidence multiplier applied when a struck ball's projected path passes
+   * dead-on through another ball's centre (distance ≤ `2 × ballRadiusMm`) —
+   * deliberately not 0, since this is a soft down-rank, not a hard filter. */
+  kissMinMultiplier: number;
+
   // --- selection ------------------------------------------------------------
   /** Candidates whose aim angles are closer than this are the same shot. */
   duplicateAngleDeg: number;
@@ -199,6 +214,9 @@ export const DEFAULT_PATHCALC_CONFIG: PathCalcConfig = {
     // own (see `ShotTechnique`'s doc) — lowest fidelity of the four.
     bankShot: 0.75,
   },
+
+  kissMarginMm: 20,
+  kissMinMultiplier: 0.1,
 
   duplicateAngleDeg: 4,
   topN: 3,

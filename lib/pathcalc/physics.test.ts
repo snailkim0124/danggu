@@ -157,6 +157,93 @@ describe('cushion rebound', () => {
   });
 });
 
+describe('kiss risk: struck ball passing close to another ball (의도치 않은 2차 충돌)', () => {
+  // Reuses the exact half-ball-hit fixture from the "90° rule" test above
+  // (cue={1000,600}, red1={1100, 600+R}) — a straight-on approach that grazes
+  // red1 at thickness 0.5, contact at ≈(1043.3, 600). The cue ball itself then
+  // deflects toward the bottom cushion (see that test), while the struck
+  // ball's own line-of-centres direction `n` points the opposite way — the two
+  // never overlap, so any risk detected here is purely the new kiss-risk
+  // signal, not the pre-existing cue-ball-vs-opponent foul check.
+  const cue = { x: 1000, y: 600 };
+  const red1 = { x: 1100, y: 600 + BALL_RADIUS_MM };
+  const contactDist = 2 * BALL_RADIUS_MM;
+
+  /** `n` (the struck ball's projected line) computed the same way the "90°
+   * rule" test above does, from a baseline run with no other ball nearby. */
+  function struckBallLine() {
+    const baseline = simulateShot(buildShotSetup(soloLayout(cue, red1), WHITE_CUE_SETTINGS), 0, CENTER, CFG);
+    return { contactAt: baseline.events[0].at, n: normalize(sub(red1, baseline.events[0].at)), baseline };
+  }
+
+  it('leaves the multiplier at 1 when no ball sits near the struck ball\'s projected path', () => {
+    const { baseline } = struckBallLine();
+    expect(baseline.kissRiskMultiplier).toBe(1);
+  });
+
+  it('drops to the configured floor when another ball sits dead-on the projected path', () => {
+    const { n } = struckBallLine();
+    // Placed well forward along `n`, dead-centre on the line (0 perpendicular
+    // offset) — the model treats this as a near-certain kiss.
+    const onLine: Point = { x: red1.x + n.x * 300, y: red1.y + n.y * 300 };
+    const layout = makeRecognition({ cue, red1, opponent: onLine, red2: { x: 2350, y: 60 } });
+    const sim = simulateShot(buildShotSetup(layout, WHITE_CUE_SETTINGS), 0, CENTER, CFG);
+
+    expect(sim.kissRiskMultiplier).toBeCloseTo(CFG.kissMinMultiplier, 6);
+    // Purely a confidence signal — the cue ball's own path/foul status is
+    // untouched by a ball sitting on some *other* ball's projected line.
+    expect(sim.opponentContactedBeforeScore).toBe(false);
+    expect(sim.opponentContactedAfterScore).toBe(false);
+  });
+
+  it('leaves the multiplier at 1 once a ball is safely outside the grey zone', () => {
+    const { n } = struckBallLine();
+    const perp: Point = { x: -n.y, y: n.x };
+    const clearanceMm = contactDist + CFG.kissMarginMm + 5; // just past the safe boundary
+    const justSafe: Point = {
+      x: red1.x + n.x * 300 + perp.x * clearanceMm,
+      y: red1.y + n.y * 300 + perp.y * clearanceMm,
+    };
+    const layout = makeRecognition({ cue, red1, opponent: justSafe, red2: { x: 2350, y: 60 } });
+    const sim = simulateShot(buildShotSetup(layout, WHITE_CUE_SETTINGS), 0, CENTER, CFG);
+
+    expect(sim.kissRiskMultiplier).toBe(1);
+  });
+
+  it('interpolates linearly across the grey zone', () => {
+    const { n } = struckBallLine();
+    const perp: Point = { x: -n.y, y: n.x };
+    const clearanceMm = contactDist + CFG.kissMarginMm / 2; // exact midpoint of the grey zone
+    const midway: Point = {
+      x: red1.x + n.x * 300 + perp.x * clearanceMm,
+      y: red1.y + n.y * 300 + perp.y * clearanceMm,
+    };
+    const layout = makeRecognition({ cue, red1, opponent: midway, red2: { x: 2350, y: 60 } });
+    const sim = simulateShot(buildShotSetup(layout, WHITE_CUE_SETTINGS), 0, CENTER, CFG);
+
+    const expected = CFG.kissMinMultiplier + 0.5 * (1 - CFG.kissMinMultiplier);
+    expect(sim.kissRiskMultiplier).toBeCloseTo(expected, 3);
+  });
+
+  it('folds into Shot.confidence as a multiplicative discount, never affecting ruleValid', () => {
+    const { n } = struckBallLine();
+    const onLine: Point = { x: red1.x + n.x * 300, y: red1.y + n.y * 300 };
+    const riskyLayout = makeRecognition({ cue, red1, opponent: onLine, red2: { x: 2350, y: 60 } });
+    const safeLayout = soloLayout(cue, red1);
+
+    const risky = simulateShot(buildShotSetup(riskyLayout, WHITE_CUE_SETTINGS), 0, CENTER, CFG);
+    const safe = simulateShot(buildShotSetup(safeLayout, WHITE_CUE_SETTINGS), 0, CENTER, CFG);
+
+    // Both otherwise-identical simulations (same aim, same contact) differ
+    // only in kissRiskMultiplier — confirms nothing else about the stroke
+    // changed just because an unrelated ball happens to sit on the struck
+    // ball's projected line.
+    expect(risky.events[0].thickness).toBeCloseTo(safe.events[0].thickness!, 6);
+    expect(risky.ruleValid).toBe(safe.ruleValid);
+    expect(risky.kissRiskMultiplier).toBeLessThan(safe.kissRiskMultiplier);
+  });
+});
+
 describe('table geometry', () => {
   it('derives axis-aligned bounds from the cushion-nose boundary', () => {
     const bounds = tableBoundsFromGeometry(OPEN_LAYOUT.table);
