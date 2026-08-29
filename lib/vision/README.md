@@ -81,8 +81,11 @@ whole score, which routes the user to the correction screen.
 ## Known limitations
 
 - Requires all four cushions at least partly visible; a fully-cropped cushion is rejected.
-- Balls touching or occluding each other merge into one blob and will be rejected on
-  circularity — the manual-correction screen is the fallback.
+- Balls touching or occluding each other merge into one connected blob, which
+  `balls.ts#trySplitMergedBlob` now attempts to split with a locally-restricted `HoughCircles`
+  pass before giving up — works well once each ball is at least roughly 20px in radius (a
+  reasonably close photo), but a whole-table shot from far enough away that balls render only
+  ~10-15px can still fail to split; the manual-correction screen is the fallback either way.
 - A neighbouring table of the same cloth colour inside the frame can enlarge the segmented
   region; the `rectangleConsistency` confidence factor is what catches it.
 - Ball radius defaults to 65.5mm-diameter Korean 4구 carom balls (matches
