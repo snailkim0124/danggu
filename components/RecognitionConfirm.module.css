@@ -75,8 +75,9 @@
 }
 
 .ballMarker {
-  /* Visual reference only — position is corrected via the D-pad panel below
-   * the photo, not by dragging this marker (문제점 #3). */
+  /* Visual reference only, on the photo itself — position is corrected by
+   * dragging in the 2D editor below, not by dragging this marker (its
+   * perspective distortion makes precise dragging awkward on a phone). */
   pointer-events: none;
 }
 
@@ -132,7 +133,56 @@
   color: #444;
 }
 
-.fineToggle {
+.editorWrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 12px;
+  background: #0b6b3a;
+  touch-action: none;
+}
+
+.editorSvg {
+  width: 100%;
+  height: 100%;
+}
+
+.editorTable {
+  fill: #0e8a4b;
+  stroke: #6b4423;
+  stroke-width: 8;
+}
+
+.editorRailDot {
+  fill: #e8e2d0;
+  stroke: #8a7d5a;
+  stroke-width: 0.5;
+}
+
+.dragHandle {
+  fill: transparent;
+  touch-action: none;
+  cursor: grab;
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+.draggableBall {
+  pointer-events: none;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.legendItem {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -140,72 +190,12 @@
   color: #444;
 }
 
-.ballRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px;
-  border-radius: 8px;
-  transition: background-color 0.15s;
-}
-
-.ballRowSelected {
-  background: rgba(10, 108, 255, 0.08);
-}
-
 .ballSwatch {
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   border: 1px solid #999;
   flex-shrink: 0;
-}
-
-.ballRowLabel {
-  flex: 1;
-  font-size: 0.9rem;
-}
-
-.dpad {
-  display: grid;
-  grid-template-columns: repeat(3, 32px);
-  grid-template-rows: repeat(2, 32px);
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.dpadButton {
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: #fff;
-  color: #333;
-  font-size: 0.85rem;
-  cursor: pointer;
-  padding: 0;
-}
-
-.dpadButton:active {
-  background: #e0e0e0;
-}
-
-.dpadUp {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.dpadLeft {
-  grid-column: 1;
-  grid-row: 2;
-}
-
-.dpadRight {
-  grid-column: 3;
-  grid-row: 2;
-}
-
-.dpadDown {
-  grid-column: 2;
-  grid-row: 2;
 }
 
 .actions {
@@ -267,22 +257,11 @@
     background: #1a1a1a;
   }
 
-  .correctionTitle,
-  .fineToggle {
+  .correctionTitle {
     color: #ccc;
   }
 
-  .ballRowSelected {
-    background: rgba(10, 108, 255, 0.18);
-  }
-
-  .dpadButton {
-    background: #111;
-    color: #eee;
-    border-color: #444;
-  }
-
-  .dpadButton:active {
-    background: #2a2a2a;
+  .legendItem {
+    color: #ccc;
   }
 }
