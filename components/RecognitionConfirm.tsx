@@ -137,7 +137,18 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
   const flipK = editorMinY + editorMaxY;
   const boundaryPoints = boundary.map((p) => `${p.x},${p.y}`).join(' ');
   const railDots = railMarkerPoints(boundary);
-  const ballDisplayRadius = (editorMaxX - editorMinX) * 0.03;
+  // True-to-scale ball size (사용자 피드백: 실제 비율보다 크게 그려서 공 위치가
+  // 헷갈림) — the viewBox is already in real mm, so the ball's own real radius
+  // is the correct SVG radius. The drag *hit target* stays deliberately
+  // larger than the visible ball (a finger is bigger than a true-scale ball
+  // rendered on a phone screen), but that circle is invisible so it doesn't
+  // mislead position judgement the way an oversized visible ball would.
+  const ballDisplayRadius = BALL_RADIUS_MM;
+  const dragHandleRadius = BALL_RADIUS_MM * 1.8;
+  // Rail dots are a purely decorative visual size, independent of the
+  // (now true-to-scale, much smaller) ball radius — tying it to `ballDisplayRadius`
+  // would shrink these to near-invisible.
+  const railDotRadius = (editorMaxX - editorMinX) * 0.006;
 
   /** Convert a pointer event's screen position into the same mm-space
    * `positions` are stored in — via the SVG's own screen CTM, which already
@@ -285,7 +296,7 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
               <polygon points={boundaryPoints} className={styles.editorTable} />
 
               {railDots.map((p, i) => (
-                <circle key={`rail-${i}`} cx={p.x} cy={p.y} r={ballDisplayRadius * 0.18} className={styles.editorRailDot} />
+                <circle key={`rail-${i}`} cx={p.x} cy={p.y} r={railDotRadius} className={styles.editorRailDot} />
               ))}
 
               {pixelDetection.balls.map((ball) => {
@@ -299,7 +310,7 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
                     <circle
                       cx={pos.x}
                       cy={pos.y}
-                      r={ballDisplayRadius * 2}
+                      r={dragHandleRadius}
                       className={styles.dragHandle}
                       onPointerDown={(e) => handlePointerDown(ball.id, e)}
                       onPointerMove={(e) => handlePointerMove(ball.id, e)}

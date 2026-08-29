@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import type { Ball, BallColor, Shot, TableGeometry } from '@/lib/types';
 import type { PathCalcShotResult } from '@/lib/uiTypes';
 import { railMarkerPoints } from '@/lib/railMarkers';
-import { classifySpin, type SpinLabel } from '@/lib/pathcalc';
+import { BALL_RADIUS_MM, classifySpin, type SpinLabel } from '@/lib/pathcalc';
 import CueBallAim from './CueBallAim';
 import styles from './ShotDiagram.module.css';
 
@@ -90,7 +90,10 @@ export default function ShotDiagram({ table, balls, shots, fallback }: Props) {
   // Real cue-ball path polyline from lib/pathcalc's simulator (includes cushion
   // bounce points for bank shots) — not a client-side approximation.
   const pathPoints = entry.path;
-  const ballRadius = (maxX - minX) * 0.02;
+  // True-to-scale ball size (사용자 피드백: 실제 비율보다 크게 그려서 공 위치가
+  // 헷갈림) — the viewBox is already in real mm, so the ball's own real radius
+  // is the correct SVG radius, no arbitrary visual-scale fraction needed.
+  const ballRadius = BALL_RADIUS_MM;
   // Rail sight/diamond markers (문제점 #3) — real carom tables have these
   // along every rail; the reconstructed diagram was missing them entirely.
   // They sit on the wood rail, just outside the cushion nose line the table
@@ -107,7 +110,11 @@ export default function ShotDiagram({ table, balls, shots, fallback }: Props) {
     const len = Math.hypot(dx, dy) || 1;
     return { x: p.x + (dx / len) * railOutset, y: p.y + (dy / len) * railOutset };
   });
-  const railDotRadius = ballRadius * 0.22;
+  // Independent of `ballRadius` now that it's true-to-scale — these are a
+  // purely decorative visual size, not a real-world-accurate diamond size, so
+  // they'd shrink to near-invisible if scaled off the (now much smaller) real
+  // ball radius instead.
+  const railDotRadius = (maxX - minX) * 0.0044;
 
   function handleTouchStart(e: React.TouchEvent) {
     touchStartX.current = e.touches[0]?.clientX ?? null;
