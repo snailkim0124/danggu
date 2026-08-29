@@ -237,6 +237,11 @@ function buildShotPlan(
   );
   confidence *= cfg.techniqueFidelity[technique];
   confidence *= clamp01(recognitionConfidence);
+  // Soft down-rank (never a hard filter — see simulate.ts's "Kiss risk" doc)
+  // for a struck ball's projected path passing close to a ball nobody aimed
+  // for. `1` when there's no such risk, so this is a no-op for every shot
+  // that isn't near another ball.
+  confidence *= sim.kissRiskMultiplier;
 
   const spinTag = isSpinShot(tip)
     ? `v${tip.vertical.toFixed(1)}h${tip.horizontal.toFixed(1)}`
@@ -404,7 +409,10 @@ export function buildFallbackPlan(
   const angleDeg = normalizeDeg(toDeg(aimRad));
   const closeness = clamp01(1 - sim.missDistanceMm / cfg.nearMissScaleMm);
   const confidence =
-    (sim.foul ? 0 : closeness) * cfg.nearMissConfidenceCap * clamp01(recognitionConfidence);
+    (sim.foul ? 0 : closeness) *
+    cfg.nearMissConfidenceCap *
+    clamp01(recognitionConfidence) *
+    sim.kissRiskMultiplier;
 
   const shot: Shot = {
     id: `nearmiss-${technique}-${angleDeg.toFixed(1)}`,
