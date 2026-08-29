@@ -23,10 +23,10 @@ import {
   type RecognitionResult,
   type Settings,
 } from '@/lib/types';
-import { type TableFrame, ballImagePointToTableMm, buildTableFrame } from './camera';
+import { type TableFrame, ballImagePointToTableMm, buildTableFrame, projectTablePoint } from './camera';
 import { type BallCandidate, classifyBallColors, detectBalls } from './balls';
 import { type ConfidenceBreakdown, needsManualCorrection, scoreConfidence } from './confidence';
-import { BALL_RADIUS_MM, CONFIDENCE_THRESHOLD, MAX_IMAGE_DIMENSION } from './constants';
+import { BALL_RADIUS_MM, CONFIDENCE_THRESHOLD, CUSHION_WIDTH_MM, MAX_IMAGE_DIMENSION } from './constants';
 import { type ClothEstimate, disposeSegmentation, segmentCloth } from './cloth';
 import { type RgbaImage, assertValidImage, downscaleToMaxDimension } from './image';
 import { detectTableBoundary, rectifiedBoundary } from './table';
@@ -40,6 +40,9 @@ export interface RecognizeOptions {
   ballRadiusMm?: number;
   /** Confidence below which manual correction is demanded. */
   confidenceThreshold?: number;
+  /** Nose-line-to-outer-rail distance in mm. Defaults to `CUSHION_WIDTH_MM`.
+   * Override for a specific table's measured cushion width. */
+  cushionWidthMm?: number;
 }
 
 /**
@@ -58,8 +61,22 @@ export interface RecognizeOptions {
 export interface PixelDetection {
   imageWidth: number;
   imageHeight: number;
-  /** Cushion-nose quad in image pixels, clockwise: [TL, TR, BR, BL]. */
+  /**
+   * Cushion-nose quad in image pixels, clockwise: [TL, TR, BR, BL] — the line
+   * a ball actually rolls to and bounces off, **not** the outer edge of the
+   * cloth (see `outerTableBoundary`). Computed by projecting the corrected
+   * `TableFrame`'s own `(0,0)..(widthMm,heightMm)` rectangle back into image
+   * pixels (`CUSHION_WIDTH_MM`-corrected — see `lib/vision/constants.ts`), so
+   * it already accounts for the same perspective the rest of the frame does.
+   * This is what the confirm screen shows and lets the user drag-correct
+   * further; a corrected quad is fed straight back into `buildTableFrame`
+   * with no further cushion-width correction (it's already the nose line).
+   */
   tableBoundary: [Point, Point, Point, Point];
+  /** The raw outer-rail edge `detectTableBoundary` actually segmented, before
+   * the `CUSHION_WIDTH_MM` correction — shown as a secondary reference outline
+   * so the user can see both lines while dragging `tableBoundary` into place. */
+  outerTableBoundary: [Point, Point, Point, Point];
   /** One entry per identified ball, in the same order as `RecognitionResult.balls`. */
   balls: Array<{
     id: string;
@@ -125,6 +142,7 @@ export async function recognize(
   const maxDimension = options.maxDimension ?? MAX_IMAGE_DIMENSION;
   const ballRadiusMm = options.ballRadiusMm ?? BALL_RADIUS_MM;
   const threshold = options.confidenceThreshold ?? CONFIDENCE_THRESHOLD;
+  const cushionWidthMm = options.cushionWidthMm ?? CUSHION_WIDTH_MM;
 
   const timingsMs: Record<string, number> = {};
   const clock = <T>(label: string, fn: () => T): T => {
@@ -150,10 +168,25 @@ export async function recognize(
       detectTableBoundary(cv, segmentation.mask, image, settings.tableSize)
     );
 
-    // Step 3 — homography + pose.
+    // Step 3 — homography + pose. `table.detection.boundary` is the OUTER
+    // rail edge (cloth segmentation can't tell it apart from the cushion nose
+    // by colour — see `CUSHION_WIDTH_MM`'s doc), so it's passed as such here;
+    // the resulting frame's own (0,0)..(widthMm,heightMm) is the corrected
+    // nose line, exactly as every downstream consumer already assumes.
     const frame = clock('buildFrame', () =>
-      buildTableFrame(table.detection.boundary, settings.tableSize, image.width, image.height)
+      buildTableFrame(
+        table.detection.boundary,
+        settings.tableSize,
+        image.width,
+        image.height,
+        undefined,
+        cushionWidthMm,
+      )
     );
+    // Nose-line corners in image pixels, for the confirm screen (§PixelDetection).
+    const noseBoundaryPx = rectifiedBoundary(frame.widthMm, frame.heightMm).map((p) =>
+      projectTablePoint(frame, p, 0),
+    ) as [Point, Point, Point, Point];
 
     // Step 4 — ball blobs.
     const detection = clock('detectBalls', () =>
@@ -253,7 +286,8 @@ export async function recognize(
       pixelDetection: {
         imageWidth: image.width,
         imageHeight: image.height,
-        tableBoundary: table.detection.boundary,
+        tableBoundary: noseBoundaryPx,
+        outerTableBoundary: table.detection.boundary,
         balls: pixelBalls,
       },
       diagnostics: {

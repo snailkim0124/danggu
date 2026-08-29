@@ -11,7 +11,7 @@
  */
 
 import { TABLE_DIMENSIONS_MM } from './types';
-import type { Ball, RecognitionResult, Settings, TableGeometry } from './types';
+import type { Ball, Point, RecognitionResult, Settings, TableGeometry } from './types';
 import type { ApproximatePixelDetection } from './uiTypes';
 
 /** Builds a plausible mm-space table + 4 balls, respecting the user's cue ball color setting. */
@@ -69,9 +69,13 @@ export function approximatePixelDetection(
 
   const [a, b, c, d] = recognition.table.boundary;
   const radiusPx = Math.min(imageWidth, imageHeight) * 0.025;
+  // Not a real perspective detection, so there's no separate "outer rail"
+  // contour to approximate — same quad as `tableBoundary`.
+  const boundaryPx: [Point, Point, Point, Point] = [toPixel(a), toPixel(b), toPixel(c), toPixel(d)];
 
   return {
-    tableBoundary: [toPixel(a), toPixel(b), toPixel(c), toPixel(d)],
+    tableBoundary: boundaryPx,
+    outerTableBoundary: boundaryPx,
     balls: recognition.balls.map((ball) => {
       const p = toPixel(ball.position);
       return { id: ball.id, color: ball.color, role: ball.role, x: p.x, y: p.y, radiusPx };

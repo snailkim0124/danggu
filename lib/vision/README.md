@@ -89,3 +89,19 @@ whole score, which routes the user to the correction screen.
   `lib/pathcalc/config.ts`), overridable via `RecognizeOptions.ballRadiusMm`.
 - Validated end-to-end only against rendered scenes so far (`synthetic.ts`). Real photos need the
   geometric gate in `scripts/geometric-gate.ts` with user-collected ground truth.
+- A real table's cushions are cloth-covered in the same colour as the bed, so `detectTableBoundary`
+  cannot find the cushion-nose line (where a ball actually rolls to and bounces) by colour alone —
+  it finds the outer rail edge, a real fixed distance further out. `buildTableFrame`'s
+  `cushionWidthMm` parameter (default `CUSHION_WIDTH_MM`, `lib/vision/constants.ts`) corrects for
+  this by treating the detected quad as the outer rail and expanding the calibration target
+  accordingly, so its own `(0,0)..(widthMm,heightMm)` comes out as the true nose line — but the
+  correction is a qualitative estimate, not a per-table measurement. The confirm screen shows both
+  lines and lets the user drag the nose-line corners to match their own table.
+- `estimateIntrinsics`/`fitFocalJointly`'s joint orthonormality objective can have more than one
+  near-zero minimum for some camera geometries — found while adding the above correction, which
+  shifts the calibration rectangle off the exact 2:1 ratio the objective was mostly exercised
+  against before. `rectangleConsistency` alone cannot tell a good fit from one that latched onto
+  the wrong minimum (both score ~1.0); a focal length off by several times, or a recovered camera
+  centre far from any plausible position, are the symptoms. See the camera-height comment on
+  `synthetic-002-long-side` in `scripts/generate-synthetic-fixtures.ts` for a reproducing case.
+  Not yet mitigated — a follow-up for the solver itself, not specific to any one caller.

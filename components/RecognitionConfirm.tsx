@@ -57,22 +57,36 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
   const [orientationFlipped, setOrientationFlipped] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const editorSvgRef = useRef<SVGSVGElement>(null);
+  const photoSvgRef = useRef<SVGSVGElement>(null);
 
-  // Both candidate table orientations for this photo's detected boundary —
-  // recomputed purely client-side (no OpenCV, no network round-trip) from
-  // the pixel quad `/api/recognize` already returned. `auto` is whichever one
-  // the backend actually picked; `alternate` is the 90°-relabeled other one.
-  // See lib/orientationFlip.ts for why this exists: the automatic picker is
+  // The cushion-NOSE line in image pixels — `pixelDetection.tableBoundary` is
+  // already `CUSHION_WIDTH_MM`-corrected by the pipeline (see that constant's
+  // doc: a real table's cushions are cloth-covered just like the bed, so
+  // colour-based segmentation alone can only find the outer rail edge, not
+  // where a ball actually rolls to and bounces). That correction is an
+  // estimate, not a per-table measurement, so it's kept in state here and
+  // exposed as 4 draggable corners on the photo for the user to fine-tune
+  // directly — pixelDetection.outerTableBoundary (the raw, uncorrected outer
+  // edge) is shown alongside, non-interactive, purely as a visual reference
+  // for "how far in from that outer line the nose should be".
+  const [corners, setCorners] = useState<[Point, Point, Point, Point]>(pixelDetection.tableBoundary);
+  const [draggingCorner, setDraggingCorner] = useState<number | null>(null);
+
+  // Both candidate table orientations for the current (possibly user-
+  // corrected) nose-line corners — recomputed purely client-side (no OpenCV,
+  // no network round-trip). `auto` is whichever one the backend actually
+  // picked; `alternate` is the 90°-relabeled other one. See
+  // lib/orientationFlip.ts for why this exists: the automatic picker is
   // provably wrong on some real "down the length of the table" photos.
   const { auto: autoFrame, alternate: alternateFrame } = useMemo(
     () =>
       computeOrientationCandidates(
-        pixelDetection.tableBoundary,
+        corners,
         recognition.table.size,
         pixelDetection.imageWidth,
         pixelDetection.imageHeight,
       ),
-    [pixelDetection, recognition.table.size],
+    [corners, recognition.table.size, pixelDetection.imageWidth, pixelDetection.imageHeight],
   );
   const activeFrame = orientationFlipped ? alternateFrame : autoFrame;
 
@@ -199,6 +213,49 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
     setDraggingId(null);
   }
 
+  /** Screen position → the photo overlay SVG's own pixel space (its viewBox
+   * is `0 0 imageWidth imageHeight` with no inner transform, so this is
+   * simpler than `clientToMm` above — no Y-flip to undo). */
+  function clientToPixel(clientX: number, clientY: number): Point | null {
+    const svg = photoSvgRef.current;
+    if (!svg) return null;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const p = pt.matrixTransform(ctm.inverse());
+    return { x: p.x, y: p.y };
+  }
+
+  function moveCornerTo(index: number, clientX: number, clientY: number) {
+    const p = clientToPixel(clientX, clientY);
+    if (!p) return;
+    setCorners((prev) => {
+      const next = [...prev] as [Point, Point, Point, Point];
+      next[index] = {
+        x: clamp(p.x, 0, pixelDetection.imageWidth),
+        y: clamp(p.y, 0, pixelDetection.imageHeight),
+      };
+      return next;
+    });
+  }
+
+  function handleCornerPointerDown(index: number, e: React.PointerEvent<SVGCircleElement>) {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDraggingCorner(index);
+    moveCornerTo(index, e.clientX, e.clientY);
+  }
+
+  function handleCornerPointerMove(index: number, e: React.PointerEvent<SVGCircleElement>) {
+    moveCornerTo(index, e.clientX, e.clientY);
+  }
+
+  function handleCornerPointerUp(e: React.PointerEvent<SVGCircleElement>) {
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setDraggingCorner(null);
+  }
+
   function handleConfirm() {
     // `positions` is already expressed in the same mm-space `Ball.position`
     // uses, under whichever table frame is currently active — the drag
@@ -211,14 +268,18 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
     onConfirm({ ...recognition, balls: correctedBalls, needsManualCorrection: false });
   }
 
-  const referenceBoundaryPoints = pixelDetection.tableBoundary.map((p) => `${p.x},${p.y}`).join(' ');
+  const noseBoundaryPoints = corners.map((p) => `${p.x},${p.y}`).join(' ');
+  const outerBoundaryPoints = pixelDetection.outerTableBoundary.map((p) => `${p.x},${p.y}`).join(' ');
+  const cornerHandleRadius = Math.min(pixelDetection.imageWidth, pixelDetection.imageHeight) * 0.014;
 
   return (
     <div className={styles.container}>
       <h2 className={styles.title}>인식 결과 확인</h2>
       <p className={styles.hint}>
-        위 사진은 참고용이며 직접 조작할 수 없습니다. 공 위치가 실제와 다르면 아래 2D 테이블 그림에서 공을 손가락으로
-        끌어 옮겨주세요.
+        사진 위 <strong>초록 실선</strong>은 공이 실제로 튕기는 쿠션 선이고, <strong>주황 점선</strong>은 자동 인식된
+        천 바깥쪽 경계입니다 (당구대 쿠션은 바닥 천과 색이 같아 자동으로는 둘을 구분하기 어려워, 표준 쿠션 폭만큼
+        안쪽으로 추정해 표시했습니다). 초록 선이 실제 쿠션 선과 다르면 모서리 4개를 직접 끌어 맞춰주세요. 공 위치는
+        아래 2D 테이블 그림에서 손가락으로 끌어 옮길 수 있습니다.
       </p>
 
       {recognition.needsManualCorrection && (
@@ -234,11 +295,17 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
         {/* eslint-disable-next-line @next/next/no-img-element -- local object URL, not an optimizable remote asset */}
         <img src={photoUrl} alt="업로드한 당구대 사진" className={styles.photo} />
         <svg
+          ref={photoSvgRef}
           className={styles.overlay}
           viewBox={`0 0 ${pixelDetection.imageWidth} ${pixelDetection.imageHeight}`}
           preserveAspectRatio="none"
         >
-          <polygon points={referenceBoundaryPoints} className={styles.tableBoundary} />
+          {/* Reference only — the raw outer cloth/rail edge, before the
+           * cushion-width correction. Never interactive: correcting this one
+           * directly would just be redoing what CUSHION_WIDTH_MM already
+           * estimates, and it's not itself the thing that matters physically. */}
+          <polygon points={outerBoundaryPoints} className={styles.outerTableBoundary} />
+          <polygon points={noseBoundaryPoints} className={styles.tableBoundary} />
           {orientationLabels.map((label, i) => (
             <text
               key={i}
@@ -262,6 +329,21 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
               className={styles.ballMarker}
             >
               <title>{BALL_LABEL[ball.color]}</title>
+            </circle>
+          ))}
+          {corners.map((c, i) => (
+            <circle
+              key={`corner-${i}`}
+              cx={c.x}
+              cy={c.y}
+              r={cornerHandleRadius}
+              className={`${styles.cornerHandle} ${draggingCorner === i ? styles.cornerHandleActive : ''}`}
+              onPointerDown={(e) => handleCornerPointerDown(i, e)}
+              onPointerMove={(e) => handleCornerPointerMove(i, e)}
+              onPointerUp={handleCornerPointerUp}
+              onPointerCancel={handleCornerPointerUp}
+            >
+              <title>쿠션 선 모서리 {i + 1} — 끌어서 조정</title>
             </circle>
           ))}
         </svg>
