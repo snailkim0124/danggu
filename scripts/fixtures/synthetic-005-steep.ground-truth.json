@@ -1,0 +1,30 @@
+{
+  "photoFile": "synthetic-005-steep.png",
+  "table": {
+    "size": "대대",
+    "widthMm": 2540,
+    "heightMm": 1270
+  },
+  "balls": [
+    {
+      "color": "white",
+      "x": 900,
+      "y": 1000
+    },
+    {
+      "color": "yellow",
+      "x": 1900,
+      "y": 200
+    },
+    {
+      "color": "red1",
+      "x": 500,
+      "y": 300
+    },
+    {
+      "color": "red2",
+      "x": 2300,
+      "y": 900
+    }
+  ]
+}

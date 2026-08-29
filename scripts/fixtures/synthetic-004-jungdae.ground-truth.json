@@ -1,0 +1,30 @@
+{
+  "photoFile": "synthetic-004-jungdae.png",
+  "table": {
+    "size": "중대",
+    "widthMm": 2438,
+    "heightMm": 1219
+  },
+  "balls": [
+    {
+      "color": "white",
+      "x": 500,
+      "y": 900
+    },
+    {
+      "color": "yellow",
+      "x": 2000,
+      "y": 300
+    },
+    {
+      "color": "red1",
+      "x": 1200,
+      "y": 600
+    },
+    {
+      "color": "red2",
+      "x": 1700,
+      "y": 900
+    }
+  ]
+}

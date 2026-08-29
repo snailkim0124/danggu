@@ -1,0 +1,30 @@
+{
+  "photoFile": "synthetic-003-corner-high.png",
+  "table": {
+    "size": "대대",
+    "widthMm": 2540,
+    "heightMm": 1270
+  },
+  "balls": [
+    {
+      "color": "white",
+      "x": 300,
+      "y": 200
+    },
+    {
+      "color": "yellow",
+      "x": 2200,
+      "y": 1000
+    },
+    {
+      "color": "red1",
+      "x": 1270,
+      "y": 635
+    },
+    {
+      "color": "red2",
+      "x": 1800,
+      "y": 300
+    }
+  ]
+}

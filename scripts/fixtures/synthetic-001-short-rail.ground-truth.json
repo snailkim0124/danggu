@@ -1,0 +1,30 @@
+{
+  "photoFile": "synthetic-001-short-rail.png",
+  "table": {
+    "size": "대대",
+    "widthMm": 2540,
+    "heightMm": 1270
+  },
+  "balls": [
+    {
+      "color": "white",
+      "x": 700,
+      "y": 300
+    },
+    {
+      "color": "yellow",
+      "x": 1900,
+      "y": 950
+    },
+    {
+      "color": "red1",
+      "x": 1300,
+      "y": 600
+    },
+    {
+      "color": "red2",
+      "x": 2100,
+      "y": 300
+    }
+  ]
+}
