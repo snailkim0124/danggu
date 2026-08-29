@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { POST } from './route';
-import { SYNTHETIC_BALL_RGB, encodePng, renderSyntheticScene } from '@/lib/vision';
+import { CUSHION_WIDTH_MM, SYNTHETIC_BALL_RGB, encodePng, renderSyntheticScene } from '@/lib/vision';
 import type { RecognizeOutput } from '@/lib/vision';
 
 /**
@@ -39,6 +39,8 @@ function testScene() {
       { positionMm: { x: 900, y: 950 }, rgb: SYNTHETIC_BALL_RGB.red },
     ],
     seed: 7,
+    // Cloth-coloured cushions, like a real table — see `CUSHION_WIDTH_MM`'s doc.
+    cushionWidthMm: CUSHION_WIDTH_MM,
   });
 }
 

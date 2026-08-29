@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { Point, Settings } from '@/lib/types';
 import { recognize } from './pipeline';
 import { SYNTHETIC_BALL_RGB, renderSyntheticScene, type SyntheticScene } from './synthetic';
-import { BALL_RADIUS_MM } from './constants';
+import { BALL_RADIUS_MM, CUSHION_WIDTH_MM } from './constants';
 
 /**
  * End-to-end tests: render a table with known ball positions, hand the pixels
@@ -54,6 +54,11 @@ function scene(overrides: Partial<Parameters<typeof renderSyntheticScene>[0]> = 
       { positionMm: { x: 900, y: 950 }, rgb: SYNTHETIC_BALL_RGB.red },
     ],
     seed: 7,
+    // Cloth-coloured cushions, exactly like a real table (see
+    // `CUSHION_WIDTH_MM`'s doc) — `recognize`'s own default cushion-width
+    // correction is what has to see through this to recover the true
+    // cushion-nose corners, not the visually-merged outer edge.
+    cushionWidthMm: CUSHION_WIDTH_MM,
     ...overrides,
     // A realistic player's-eye view: standing off one end, phone at chest
     // height, the whole table in shot. Every cushion is at least partly

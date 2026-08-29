@@ -45,14 +45,27 @@ import {
 /**
  * The mm-space rectangle a table of the given size maps to, in the corner
  * order documented above.
+ *
+ * `cushionWidthMm` (default `0`, reproducing the exact cushion-nose rectangle
+ * as before) expands the rectangle outward on every side. This exists because
+ * `detectTableBoundary` cannot tell the cushion nose (where balls actually
+ * roll and bounce) apart from the cloth-covered rail beyond it by colour —
+ * both are cut from the same cloth, so the segmented contour's outer edge is
+ * really the *outer rail edge*, a real, fixed distance further out than the
+ * nose line. Passing that distance here and treating the detected quad as the
+ * outer-rail rectangle (rather than as the nose line itself) means the
+ * resulting `TableFrame`'s own `(0,0)..(widthMm,heightMm)` — used everywhere
+ * else in the app — is the true nose line, with no change needed anywhere
+ * downstream. See `lib/vision/constants.ts#CUSHION_WIDTH_MM`.
  */
-export function tableRectMm(size: TableSize): [Point, Point, Point, Point] {
+export function tableRectMm(size: TableSize, cushionWidthMm = 0): [Point, Point, Point, Point] {
   const { widthMm, heightMm } = TABLE_DIMENSIONS_MM[size];
+  const c = cushionWidthMm;
   return [
-    { x: 0, y: 0 },
-    { x: widthMm, y: 0 },
-    { x: widthMm, y: heightMm },
-    { x: 0, y: heightMm },
+    { x: -c, y: -c },
+    { x: widthMm + c, y: -c },
+    { x: widthMm + c, y: heightMm + c },
+    { x: -c, y: heightMm + c },
   ];
 }
 
@@ -573,9 +586,15 @@ export function buildTableFrame(
   size: TableSize,
   imageWidth: number,
   imageHeight: number,
-  forceRotation?: 0 | 1
+  forceRotation?: 0 | 1,
+  /** See `tableRectMm` — pass this when `imageQuad` is the outer-rail edge
+   * (e.g. straight from `detectTableBoundary`) rather than the cushion-nose
+   * line itself. Defaults to `0` (no correction), matching every existing
+   * caller that already has a nose-line quad (a user-corrected one, or a
+   * synthetic test rig built directly from `tableRectMm(size)`). */
+  cushionWidthMm = 0
 ): TableFrame {
-  const mmQuad = tableRectMm(size);
+  const mmQuad = tableRectMm(size, cushionWidthMm);
   const aligned = alignQuadToTable(imageQuad, mmQuad, imageWidth, imageHeight, forceRotation);
   const tableToImage = computeHomography(mmQuad, aligned);
   const imageToTable = mat3Inverse(tableToImage);

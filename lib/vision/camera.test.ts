@@ -293,4 +293,19 @@ describe('tableRectMm', () => {
       });
     }
   });
+
+  it('defaults to no cushion-width expansion (exact nose-line rectangle)', () => {
+    expect(tableRectMm('대대', 0)).toEqual(tableRectMm('대대'));
+  });
+
+  it('expands every side outward by cushionWidthMm when given (outer-rail rectangle)', () => {
+    const { widthMm, heightMm } = TABLE_DIMENSIONS_MM['대대'];
+    const rect = tableRectMm('대대', 45);
+    expect(rect).toEqual([
+      { x: -45, y: -45 },
+      { x: widthMm + 45, y: -45 },
+      { x: widthMm + 45, y: heightMm + 45 },
+      { x: -45, y: heightMm + 45 },
+    ]);
+  });
 });

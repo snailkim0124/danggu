@@ -57,6 +57,17 @@ export interface SyntheticSceneSpec {
   backgroundRgb?: [number, number, number];
   /** Width of the visible rail band beyond the cushion nose line, in mm. */
   railWidthMm?: number;
+  /**
+   * Width (mm) of a cushion band, cloth-coloured just like the bed, between
+   * the cushion-nose line and the `railRgb` band. `0` (default) renders the
+   * simpler case where cloth ends exactly at the nose line — useful for
+   * isolating unrelated behaviour, but not what a real table looks like: real
+   * cushions are covered in the same cloth as the bed, which is exactly why
+   * `detectTableBoundary` cannot find the nose line by colour alone (see
+   * `lib/vision/constants.ts#CUSHION_WIDTH_MM`). Set this to reproduce that
+   * and exercise the pipeline's `cushionWidthMm` correction end-to-end.
+   */
+  cushionWidthMm?: number;
 }
 
 export interface SyntheticScene {
@@ -95,6 +106,7 @@ export function renderSyntheticScene(spec: SyntheticSceneSpec): SyntheticScene {
     railRgb = [86, 58, 38],
     backgroundRgb = [24, 24, 28],
     railWidthMm = 90,
+    cushionWidthMm = 0,
   } = spec;
 
   const { widthMm, heightMm } = TABLE_DIMENSIONS_MM[tableSize];
@@ -142,14 +154,23 @@ export function renderSyntheticScene(spec: SyntheticSceneSpec): SyntheticScene {
         const wx = C[0] + t * d[0];
         const wy = C[1] + t * d[1];
         const inTable = wx >= 0 && wx <= widthMm && wy >= 0 && wy <= heightMm;
+        const inCushion =
+          wx >= -cushionWidthMm &&
+          wx <= widthMm + cushionWidthMm &&
+          wy >= -cushionWidthMm &&
+          wy <= heightMm + cushionWidthMm;
+        const railOuterMm = cushionWidthMm + railWidthMm;
         const inRail =
-          wx >= -railWidthMm &&
-          wx <= widthMm + railWidthMm &&
-          wy >= -railWidthMm &&
-          wy <= heightMm + railWidthMm;
+          wx >= -railOuterMm && wx <= widthMm + railOuterMm && wy >= -railOuterMm && wy <= heightMm + railOuterMm;
         if (inTable) {
           color = clothRgb;
           clothDepth[idx] = t; // ray parameter is monotonic in depth
+        } else if (inCushion) {
+          // Same colour as the bed on purpose — see `cushionWidthMm`'s doc.
+          // Left out of `clothDepth` (which stays `Infinity` here): this band
+          // is the raised cushion face, not the flat bed, so a ball is never
+          // actually behind it the way it can be behind bed cloth.
+          color = clothRgb;
         } else if (inRail) {
           color = railRgb;
         }

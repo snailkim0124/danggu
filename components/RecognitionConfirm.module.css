@@ -59,9 +59,35 @@
 }
 
 .tableBoundary {
-  fill: rgba(80, 200, 120, 0.15);
+  fill: rgba(80, 200, 120, 0.1);
   stroke: #4caf50;
   stroke-width: 4;
+  pointer-events: none;
+}
+
+.outerTableBoundary {
+  fill: none;
+  stroke: #ff9800;
+  stroke-width: 3;
+  stroke-dasharray: 10 8;
+  pointer-events: none;
+}
+
+.cornerHandle {
+  fill: rgba(76, 175, 80, 0.35);
+  stroke: #4caf50;
+  stroke-width: 2;
+  touch-action: none;
+  cursor: grab;
+}
+
+.cornerHandle:active {
+  cursor: grabbing;
+}
+
+.cornerHandleActive {
+  fill: rgba(10, 108, 255, 0.5);
+  stroke: #0a6cff;
 }
 
 .orientationLabel {

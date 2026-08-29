@@ -47,6 +47,25 @@ export const MAX_IMAGE_DIMENSION = 1600;
 export const CONFIDENCE_THRESHOLD = 0.6;
 
 /**
+ * Distance (mm) from the cushion-nose line (where a ball actually rolls and
+ * bounces) out to the outer edge of the cloth-covered rail. Needed because
+ * `detectTableBoundary`'s colour-based cloth segmentation cannot tell the two
+ * apart — a real 4구 table's cushions are covered in the same cloth as the
+ * bed, so the segmented contour's outer edge is the outer rail, not the nose
+ * line, a real fixed distance further out. `buildTableFrame`'s
+ * `cushionWidthMm` parameter uses this to correct for it (see that function's
+ * doc and `tableRectMm`).
+ *
+ * **Not a measured value for any specific table** — a placeholder qualitative
+ * estimate, same status as the "tuned qualitatively, not measured" constants
+ * in `lib/pathcalc/config.ts`. Overridable per call via
+ * `RecognizeOptions.cushionWidthMm` for a specific table, and further
+ * correctable in the confirm screen by dragging the displayed nose-line
+ * corners directly.
+ */
+export const CUSHION_WIDTH_MM = 45;
+
+/**
  * Plausible range for the camera's height above the cloth, in mm. Used as a
  * sanity check on the recovered pose: a phone held by a standing player is
  * roughly 1.2-1.8m up, a phone resting on the rail is ~0.1m. Anything outside
