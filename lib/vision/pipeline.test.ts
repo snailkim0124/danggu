@@ -239,6 +239,52 @@ describe('recognize (end to end on a rendered table)', () => {
   );
 
   it(
+    'recovers both balls when two are frozen touching each other',
+    async () => {
+      // Two balls placed exactly tangent (centre-to-centre = one ball
+      // diameter) — the same "공이 붙어있는" case a real photo can produce,
+      // which used to always be rejected as a single oversized, non-circular
+      // merged blob (see balls.ts#trySplitMergedBlob).
+      // The default `scene()` camera frames the *whole* table from one end,
+      // which renders each ball only ~11px in radius — too small at any
+      // camera-angle for a Hough fit to resolve two touching balls' rims
+      // apart, regardless of tuning (verified while building this test).
+      // Realistic phone photos are very often closer than that (standing
+      // over the table, or a partial-table close-up), so this uses a nearer
+      // camera giving each ball a plausible ~25px radius instead.
+      const touchGap = BALL_RADIUS_MM * 2;
+      const s = scene({
+        imageWidth: 1600,
+        imageHeight: 1200,
+        balls: [
+          { positionMm: { x: 2100, y: 950 }, rgb: SYNTHETIC_BALL_RGB.white },
+          { positionMm: { x: 1900, y: 300 }, rgb: SYNTHETIC_BALL_RGB.red },
+          { positionMm: { x: 350, y: 500 }, rgb: SYNTHETIC_BALL_RGB.yellow },
+          { positionMm: { x: 350 + touchGap, y: 500 }, rgb: SYNTHETIC_BALL_RGB.red },
+        ],
+      });
+      const { recognition, diagnostics } = await recognize(s.image, SETTINGS);
+      expect(recognition.balls, `diagnostics ${JSON.stringify(diagnostics)}`).toHaveLength(4);
+
+      // Touching balls are a genuinely harder case (each occludes part of the
+      // other's rim), so allow a looser tolerance than the standard 8mm
+      // geometric gate — the point of this test is "found and roughly
+      // right", not full geometric-gate precision.
+      const truth = s.ballPositionsMm;
+      for (const ball of recognition.balls) {
+        const nearest = Math.min(
+          ...truth.map((t) => Math.hypot(t.x - ball.position.x, t.y - ball.position.y))
+        );
+        expect(
+          nearest,
+          `${ball.color} recovered at (${ball.position.x.toFixed(0)}, ${ball.position.y.toFixed(0)})`
+        ).toBeLessThan(25);
+      }
+    },
+    TIMEOUT_MS
+  );
+
+  it(
     'downscales oversized input before processing',
     async () => {
       const s = scene({ imageWidth: 2400, imageHeight: 1800 });

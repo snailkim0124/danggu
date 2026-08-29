@@ -24,6 +24,16 @@
  * plain centroid is pulled several millimetres towards the shadow, while a
  * trimmed circle fit rejects the shadow lobe as outliers.
  *
+ * Two or more balls frozen together (touching, or apparently overlapping
+ * under an oblique camera angle) are this connectivity-based approach's one
+ * real blind spot: they merge into a single "not cloth" blob, too large and
+ * too non-circular for any single-contour check above to ever accept. This is
+ * where `HoughCircles` earns the exception the opening paragraph rules it out
+ * for globally — `trySplitMergedBlob` runs it *locally*, restricted to a tight
+ * crop around exactly this blob and a tight radius band around
+ * `expectedBallRadiusPx` at that specific spot, which sidesteps the "no global
+ * radius range" problem entirely.
+ *
  * Classification (plan Phase 1 step 5)
  * ------------------------------------
  * Entirely relative — see `classifyBallColors`. No absolute hue/threshold
@@ -91,6 +101,17 @@ const RADIUS_RATIO_RANGE: [number, number] = [0.6, 1.6];
 const MIN_CIRCULARITY = 0.55;
 
 /**
+ * How large a blob's area may be, as a multiple of one ball's expected
+ * silhouette area, before it's worth attempting `trySplitMergedBlob` on it —
+ * two or more balls frozen together read as a single connected "not cloth"
+ * blob (see that function's doc). Below the low end it's just a normal
+ * single ball (or genuine junk not shaped like any number of balls); above
+ * the high end (more than all 4 balls on the table could plausibly cover) a
+ * Hough search would only waste time chasing spurious circles in noise.
+ */
+const MERGED_BLOB_AREA_RANGE: [number, number] = [1.3, 4.5];
+
+/**
  * Find ball candidates inside the detected table quad.
  *
  * `clothMask` is the 8UC1 cloth mask; `rgb` is the 8UC3 RGB image. Both stay
@@ -148,6 +169,24 @@ export function detectBalls(
       }
 
       const circularity = (4 * Math.PI * area) / (perimeter * perimeter);
+
+      // Two or more balls frozen together (touching, or apparently
+      // overlapping under this camera's oblique angle) merge into one
+      // connected blob — too large and too non-circular to be a single ball,
+      // so the checks below would always reject it outright (see module
+      // README's "Known limitations"). Try to recover the individual balls
+      // before falling through to that rejection.
+      const roughExpectedRadiusPx = expectedBallRadiusPx(frame, rough, ballRadiusMm);
+      const singleBallAreaPx = roughExpectedRadiusPx > 0 ? Math.PI * roughExpectedRadiusPx ** 2 : 0;
+      const areaRatio = singleBallAreaPx > 0 ? area / singleBallAreaPx : 0;
+      if (areaRatio >= MERGED_BLOB_AREA_RANGE[0] && areaRatio <= MERGED_BLOB_AREA_RANGE[1]) {
+        const split = trySplitMergedBlob(cv, scope, rgb, image, frame, contour, ballRadiusMm, inner);
+        if (split.length >= 2) {
+          candidates.push(...split);
+          continue;
+        }
+      }
+
       if (circularity < MIN_CIRCULARITY) {
         rejected.push({ center: rough, reason: `circularity ${circularity.toFixed(2)} too low` });
         continue;
@@ -208,6 +247,121 @@ export function detectBalls(
   } finally {
     scope.dispose();
   }
+}
+
+/**
+ * Recover individual balls from a blob too large/non-circular to be one ball
+ * — the connectivity-based approach above has no way to tell "one big blob"
+ * apart from "several balls touching", so it always rejects the latter (see
+ * module README's "Known limitations": "Balls touching or occluding each
+ * other merge into one blob").
+ *
+ * Runs `HoughCircles` restricted to a tight crop around the blob and a tight
+ * radius band around the *locally* pose-predicted ball radius. The module doc
+ * on `detectBalls` explains why an unrestricted `HoughCircles` is impractical
+ * (a ball's apparent radius varies 2-3x across one photo, and there is no way
+ * to give it a global radius range) — but that objection evaporates once both
+ * the search region and the radius range are this tightly constrained, which
+ * is only possible *because* a merged blob has already told us roughly where
+ * to look and `expectedBallRadiusPx` already tells us roughly how big to look
+ * for. `HOUGH_GRADIENT`'s edge-based method finds each ball's own curved
+ * boundary directly, unlike the contour/circularity path above which can only
+ * ever see the *merged shape's* boundary.
+ */
+function trySplitMergedBlob(
+  cv: CV,
+  scope: CvScope,
+  rgb: InstanceType<CV['Mat']>,
+  image: RgbaImage,
+  frame: TableFrame,
+  contour: InstanceType<CV['Mat']>,
+  ballRadiusMm: number,
+  inner: readonly Vec2[]
+): BallCandidate[] {
+  const rect = cv.boundingRect(contour);
+  const padding = Math.max(4, Math.round(Math.max(rect.width, rect.height) * 0.15));
+  const x0 = Math.max(0, rect.x - padding);
+  const y0 = Math.max(0, rect.y - padding);
+  const x1 = Math.min(image.width, rect.x + rect.width + padding);
+  const y1 = Math.min(image.height, rect.y + rect.height + padding);
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (w < 4 || h < 4) return [];
+
+  const expectedAtCenter = expectedBallRadiusPx(frame, { x: x0 + w / 2, y: y0 + h / 2 }, ballRadiusMm);
+  if (!(expectedAtCenter > 0)) return [];
+  const minRadius = Math.max(2, Math.round(expectedAtCenter * 0.7));
+  const maxRadius = Math.max(minRadius + 1, Math.round(expectedAtCenter * 1.3));
+
+  const crop = scope.track(rgb.roi(new cv.Rect(x0, y0, w, h)));
+  const gray = scope.track(new cv.Mat());
+  cv.cvtColor(crop, gray, cv.COLOR_RGB2GRAY);
+  cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+
+  const circles = scope.track(new cv.Mat());
+  cv.HoughCircles(
+    gray,
+    circles,
+    cv.HOUGH_GRADIENT,
+    1,
+    expectedAtCenter * 1.2, // minDist between circle centres — just under one ball apart
+    80, // Canny high threshold (low threshold is half this, per HOUGH_GRADIENT's contract)
+    // Accumulator threshold, well below the ~100 default: a ball whose rim is
+    // half-occluded by the other ball it's touching casts far fewer votes
+    // than an isolated one, and this only runs inside an already-tight crop
+    // (not scanning the whole photo), so the usual false-positive risk of a
+    // low threshold is contained — anything spurious still has to pass the
+    // radius-ratio and colour-sample checks below to become a candidate.
+    8,
+    minRadius,
+    maxRadius
+  );
+
+  const found: BallCandidate[] = [];
+  for (let i = 0; i < circles.cols; i++) {
+    const center: Vec2 = { x: circles.data32F[i * 3] + x0, y: circles.data32F[i * 3 + 1] + y0 };
+    const r = circles.data32F[i * 3 + 2];
+    if (!pointInPolygon(inner, center)) continue;
+
+    const expectedRadiusPx = expectedBallRadiusPx(frame, center, ballRadiusMm);
+    if (!(expectedRadiusPx > 0)) continue;
+    const radiusRatio = r / expectedRadiusPx;
+    if (radiusRatio < RADIUS_RATIO_RANGE[0] || radiusRatio > RADIUS_RATIO_RANGE[1]) continue;
+
+    const rgbSample = sampleDiscMedianRgb(rgb, image, center, r * 0.5);
+    if (!rgbSample) continue;
+
+    const sizeAgreement = Math.exp(-(((radiusRatio - 1) / 0.3) ** 2));
+    found.push({
+      center,
+      radiusPx: r,
+      expectedRadiusPx,
+      // Hough found an actual circular edge, not a shape contour — there is
+      // no blob-shape circularity to measure here, so this reports "as
+      // circular as physically meaningful" rather than an invented number.
+      circularity: 1,
+      radiusRatio,
+      rgb: rgbSample,
+      // A mild, fixed penalty vs. a clean isolated-ball contour fit: this
+      // candidate came from a merged/occluded blob, a genuinely harder case
+      // to have gotten right, so it should not out-rank an equally-sized
+      // clean detection when `detectBalls`'s caller keeps only the top 4.
+      score: sizeAgreement * 0.9,
+    });
+  }
+
+  // Two "circles" whose centres are implausibly close are the same physical
+  // ball found twice — common right at the accumulator threshold. Keep only
+  // the higher-scoring one of any such pair.
+  found.sort((a, b) => b.score - a.score);
+  const deduped: BallCandidate[] = [];
+  for (const c of found) {
+    if (deduped.some((d) => distance(d.center, c.center) < Math.min(c.expectedRadiusPx, d.expectedRadiusPx))) {
+      continue;
+    }
+    deduped.push(c);
+  }
+  return deduped;
 }
 
 function centroidOf(poly: readonly Vec2[]): Vec2 {
