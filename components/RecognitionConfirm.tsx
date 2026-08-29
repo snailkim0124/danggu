@@ -272,15 +272,31 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
   const outerBoundaryPoints = pixelDetection.outerTableBoundary.map((p) => `${p.x},${p.y}`).join(' ');
   const cornerHandleRadius = Math.min(pixelDetection.imageWidth, pixelDetection.imageHeight) * 0.014;
 
+  // `pixelDetection.approximate` means there was no real per-photo detection
+  // at all (lib/mockData.ts's fallback) — the boundary/ball pixel positions
+  // are a fabricated illustrative layout, not anything derived from this
+  // photo. Drawing them (and letting the user "correct" corners that don't
+  // correspond to anything real) would be actively misleading, and position
+  // correction already works fully from the 2D editor below regardless — so
+  // the photo overlay is skipped entirely in this mode, not just de-emphasized.
+  const hasRealOverlay = !pixelDetection.approximate;
+
   return (
     <div className={styles.container}>
       <h2 className={styles.title}>인식 결과 확인</h2>
-      <p className={styles.hint}>
-        사진 위 <strong>초록 실선</strong>은 공이 실제로 튕기는 쿠션 선이고, <strong>주황 점선</strong>은 자동 인식된
-        천 바깥쪽 경계입니다 (당구대 쿠션은 바닥 천과 색이 같아 자동으로는 둘을 구분하기 어려워, 표준 쿠션 폭만큼
-        안쪽으로 추정해 표시했습니다). 초록 선이 실제 쿠션 선과 다르면 모서리 4개를 직접 끌어 맞춰주세요. 공 위치는
-        아래 2D 테이블 그림에서 손가락으로 끌어 옮길 수 있습니다.
-      </p>
+      {hasRealOverlay ? (
+        <p className={styles.hint}>
+          사진 위 <strong>초록 실선</strong>은 공이 실제로 튕기는 쿠션 선이고, <strong>주황 점선</strong>은 자동
+          인식된 천 바깥쪽 경계입니다 (당구대 쿠션은 바닥 천과 색이 같아 자동으로는 둘을 구분하기 어려워, 표준
+          쿠션 폭만큼 안쪽으로 추정해 표시했습니다). 초록 선이 실제 쿠션 선과 다르면 모서리 4개를 직접 끌어
+          맞춰주세요. 공 위치는 아래 2D 테이블 그림에서 손가락으로 끌어 옮길 수 있습니다.
+        </p>
+      ) : (
+        <p className={styles.hint}>
+          사진에서 정확한 위치를 인식하지 못해 사진 위에는 아무 것도 표시하지 않습니다. 아래 사진을 참고해서, 2D
+          테이블 그림에서 공 위치를 손가락으로 직접 맞춰주세요.
+        </p>
+      )}
 
       {recognition.needsManualCorrection && (
         <p className={styles.warningBanner} role="alert">
@@ -288,67 +304,70 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
         </p>
       )}
       {pixelDetection.approximate && (
-        <p className={styles.infoBanner}>사진 위 오버레이 위치는 근사치입니다 (정밀 인식 좌표 연동 전 표시).</p>
+        <p className={styles.infoBanner}>사진 인식에 실패해 샘플 배치로 대체했습니다 — 아래에서 실제 위치로 맞춰주세요.</p>
       )}
 
       <div className={styles.imageWrap} style={{ aspectRatio: `${pixelDetection.imageWidth} / ${pixelDetection.imageHeight}` }}>
         {/* eslint-disable-next-line @next/next/no-img-element -- local object URL, not an optimizable remote asset */}
         <img src={photoUrl} alt="업로드한 당구대 사진" className={styles.photo} />
-        <svg
-          ref={photoSvgRef}
-          className={styles.overlay}
-          viewBox={`0 0 ${pixelDetection.imageWidth} ${pixelDetection.imageHeight}`}
-          preserveAspectRatio="none"
-        >
-          {/* Reference only — the raw outer cloth/rail edge, before the
-           * cushion-width correction. Never interactive: correcting this one
-           * directly would just be redoing what CUSHION_WIDTH_MM already
-           * estimates, and it's not itself the thing that matters physically. */}
-          <polygon points={outerBoundaryPoints} className={styles.outerTableBoundary} />
-          <polygon points={noseBoundaryPoints} className={styles.tableBoundary} />
-          {orientationLabels.map((label, i) => (
-            <text
-              key={i}
-              x={label.at.x}
-              y={label.at.y}
-              textAnchor="middle"
-              className={styles.orientationLabel}
-            >
-              {label.text}
-            </text>
-          ))}
-          {pixelDetection.balls.map((ball) => (
-            <circle
-              key={ball.id}
-              cx={ball.x}
-              cy={ball.y}
-              r={ball.radiusPx}
-              fill={BALL_DISPLAY_COLOR[ball.color]}
-              stroke="#222"
-              strokeWidth={ball.radiusPx * 0.12}
-              className={styles.ballMarker}
-            >
-              <title>{BALL_LABEL[ball.color]}</title>
-            </circle>
-          ))}
-          {corners.map((c, i) => (
-            <circle
-              key={`corner-${i}`}
-              cx={c.x}
-              cy={c.y}
-              r={cornerHandleRadius}
-              className={`${styles.cornerHandle} ${draggingCorner === i ? styles.cornerHandleActive : ''}`}
-              onPointerDown={(e) => handleCornerPointerDown(i, e)}
-              onPointerMove={(e) => handleCornerPointerMove(i, e)}
-              onPointerUp={handleCornerPointerUp}
-              onPointerCancel={handleCornerPointerUp}
-            >
-              <title>쿠션 선 모서리 {i + 1} — 끌어서 조정</title>
-            </circle>
-          ))}
-        </svg>
+        {hasRealOverlay && (
+          <svg
+            ref={photoSvgRef}
+            className={styles.overlay}
+            viewBox={`0 0 ${pixelDetection.imageWidth} ${pixelDetection.imageHeight}`}
+            preserveAspectRatio="none"
+          >
+            {/* Reference only — the raw outer cloth/rail edge, before the
+             * cushion-width correction. Never interactive: correcting this one
+             * directly would just be redoing what CUSHION_WIDTH_MM already
+             * estimates, and it's not itself the thing that matters physically. */}
+            <polygon points={outerBoundaryPoints} className={styles.outerTableBoundary} />
+            <polygon points={noseBoundaryPoints} className={styles.tableBoundary} />
+            {orientationLabels.map((label, i) => (
+              <text
+                key={i}
+                x={label.at.x}
+                y={label.at.y}
+                textAnchor="middle"
+                className={styles.orientationLabel}
+              >
+                {label.text}
+              </text>
+            ))}
+            {pixelDetection.balls.map((ball) => (
+              <circle
+                key={ball.id}
+                cx={ball.x}
+                cy={ball.y}
+                r={ball.radiusPx}
+                fill={BALL_DISPLAY_COLOR[ball.color]}
+                stroke="#222"
+                strokeWidth={ball.radiusPx * 0.12}
+                className={styles.ballMarker}
+              >
+                <title>{BALL_LABEL[ball.color]}</title>
+              </circle>
+            ))}
+            {corners.map((c, i) => (
+              <circle
+                key={`corner-${i}`}
+                cx={c.x}
+                cy={c.y}
+                r={cornerHandleRadius}
+                className={`${styles.cornerHandle} ${draggingCorner === i ? styles.cornerHandleActive : ''}`}
+                onPointerDown={(e) => handleCornerPointerDown(i, e)}
+                onPointerMove={(e) => handleCornerPointerMove(i, e)}
+                onPointerUp={handleCornerPointerUp}
+                onPointerCancel={handleCornerPointerUp}
+              >
+                <title>쿠션 선 모서리 {i + 1} — 끌어서 조정</title>
+              </circle>
+            ))}
+          </svg>
+        )}
       </div>
 
+      {hasRealOverlay && (
       <div className={styles.orientationRow}>
         <span className={styles.orientationHint}>
           사진 위 노란 글씨가 실제 당구대와 반대로 표시됐다면 (긴 변인데 &quot;짧은 변&quot;이라고 나오는 등):
@@ -362,6 +381,7 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
           가로/세로 바꾸기
         </button>
       </div>
+      )}
 
       <div className={styles.correctionPanel}>
         <div className={styles.correctionHeader}>
