@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { FORCE_LEVEL_LABEL, type Ball, type Shot, type TableGeometry } from '@/lib/types';
+import type { Ball, Shot, TableGeometry } from '@/lib/types';
 import type { PathCalcShotResult } from '@/lib/uiTypes';
 import { railMarkerPoints } from '@/lib/railMarkers';
 import { BALL_DISPLAY_COLOR } from '@/lib/ballVisuals';
@@ -211,16 +211,13 @@ export default function ShotDiagram({ table, balls, shots, fallback }: Props) {
           <dt>각도 (참고용)</dt>
           <dd>{shot.angleDeg.toFixed(0)}°</dd>
         </div>
-        <div className={`${styles.detailRow} ${styles.detailRowWide}`}>
+        <div className={styles.detailRow}>
           <dt>힘</dt>
-          <dd className={styles.forceDetail}>
-            <span className={styles.forceScale} aria-hidden="true">
+          <dd>
+            <span className={styles.forceScale} aria-label={`힘 ${shot.forceLevel} / 5`}>
               {[1, 2, 3, 4, 5].map((level) => (
                 <span key={level} className={`${styles.forceDot} ${level <= shot.forceLevel ? styles.forceDotFilled : ''}`} />
               ))}
-            </span>
-            <span className={styles.forceLabel}>
-              {shot.forceLevel} — {FORCE_LEVEL_LABEL[shot.forceLevel]}
             </span>
           </dd>
         </div>
