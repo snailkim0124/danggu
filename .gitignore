@@ -50,3 +50,9 @@ next-env.d.ts
 
 # regenerable synthetic test fixtures (large PNGs) - keep ground-truth JSON + generator script
 /scripts/fixtures/*.png
+
+# geometric-gate real-photo test cases (docs/testing/geometric-gate-guide.md) -
+# kept local-only by user decision (2026-08-30): 30+ real photos would add
+# ~10-20MB permanently to repo history. Run scripts/geometric-gate.ts locally
+# and share the report, not the raw photos.
+/test-data/
