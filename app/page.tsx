@@ -97,7 +97,14 @@ export default function Home() {
       </header>
 
       <main className={styles.main}>
-        {step === 'upload' && <PhotoUpload settings={settings} onRecognized={handleRecognized} />}
+        {step === 'upload' && (
+          <>
+            <PhotoUpload settings={settings} onRecognized={handleRecognized} />
+            <Link href="/manual-setup" className={styles.manualSetupButton}>
+              사진 없이 수동 배치로 시작
+            </Link>
+          </>
+        )}
 
         {step === 'confirm' && recognition && pixelDetection && photoUrl && (
           <RecognitionConfirm
