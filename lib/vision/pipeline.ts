@@ -197,7 +197,8 @@ export async function recognize(
         image,
         frame,
         table.detection.boundary,
-        ballRadiusMm
+        ballRadiusMm,
+        segmentation.estimate.hue
       )
     );
 

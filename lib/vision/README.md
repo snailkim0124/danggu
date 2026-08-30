@@ -86,6 +86,18 @@ whole score, which routes the user to the correction screen.
   pass before giving up — works well once each ball is at least roughly 20px in radius (a
   reasonably close photo), but a whole-table shot from far enough away that balls render only
   ~10-15px can still fail to split; the manual-correction screen is the fallback either way.
+  Two failure modes of that split were found and fixed from a real photo (`scripts/fixtures/photos/에러1.jpg`,
+  `lib/vision/realPhotos.test.ts`): a ball's own cast shadow could get fit as a second, spurious
+  circle (now rejected — a real ball is never anywhere near as dark as a shadow on cloth, checked
+  relative to the brightest circle found in the same blob, not an absolute cutoff), and — a
+  pre-existing issue in the single-ball path too, unrelated to that split — a glare speck or dust
+  fleck excluded from the cloth mask on saturation/value alone can still fit a plausible ball-sized
+  circle whose colour sample, once averaged with the ordinary felt around it, reads as essentially
+  cloth-coloured (now rejected by hue proximity to the segmented cloth's own hue). The `minDist`
+  tension between "two genuinely touching balls" and "one ball found twice by Hough" is narrow
+  (~1.2x a ball's radius apart for a real duplicate vs. as little as ~1.4x for a genuine pair's
+  *apparent* separation under an oblique angle) and only really resolved by scoring+colour, not
+  distance alone — see the `minDist`/dedup comments in `trySplitMergedBlob`.
 - A neighbouring table of the same cloth colour inside the frame can enlarge the segmented
   region; the `rectangleConsistency` confidence factor is what catches it.
 - Ball radius defaults to 65.5mm-diameter Korean 4구 carom balls (matches
