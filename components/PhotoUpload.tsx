@@ -90,7 +90,10 @@ export default function PhotoUpload({ settings, onRecognized }: Props) {
   return (
     <div className={styles.container}>
       <h2 className={styles.title}>당구대 사진 업로드</h2>
-      <p className={styles.hint}>테이블 전체와 공 4개가 보이도록 찍어주세요. 비스듬한 각도도 괜찮습니다.</p>
+      <p className={styles.hint}>
+        테이블 전체와 쿠션 모서리 4개, 공 4개가 보이도록 찍어주세요. 서서 보는 정도의 비스듬한 각도가
+        좋아요 — 위에서 아래로 내려다보듯 찍으면 인식 오차가 커질 수 있습니다.
+      </p>
 
       <div className={styles.previewBox}>
         {previewUrl ? (
