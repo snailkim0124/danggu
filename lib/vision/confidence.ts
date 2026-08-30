@@ -24,7 +24,15 @@ import { CONFIDENCE_THRESHOLD, PLAUSIBLE_CAMERA_HEIGHT_MM } from './constants';
 import { clamp } from './geometry';
 
 export interface ConfidenceInputs {
-  /** RMS residual of each of the four cushion line fits, in pixels. */
+  /**
+   * Pixel-space fit-error signals feeding `scoreTableFit` — the RMS residual
+   * of each of the four cushion line fits, plus each corner's estimated
+   * extrapolation error (`table.ts#cornerExtrapolationErrorPx`; 0 for a
+   * corner that didn't need extrapolating). `scoreTableFit` only ever looks
+   * at the worst entry, so these share one array rather than being scored
+   * separately — a corner can be positionally wrong even when every side's
+   * own RMS looks fine (see that function's doc for why).
+   */
   sideResidualsPx: readonly number[];
   /** Image diagonal in pixels — the scale the residuals are judged against. */
   imageDiagonalPx: number;
