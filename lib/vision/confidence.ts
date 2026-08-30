@@ -36,6 +36,10 @@ export interface ConfidenceInputs {
   sideResidualsPx: readonly number[];
   /** Image diagonal in pixels — the scale the residuals are judged against. */
   imageDiagonalPx: number;
+  /** `TableDetectionResult.lowEvidenceSideCount` — how many of the 4 cushion
+   * sides had less than `MIN_VISIBLE_FRACTION` of their own reconstructed
+   * length actually observed. See `scoreTableFit`'s doc. */
+  lowEvidenceSideCount: 0 | 1 | 2 | 3 | 4;
   /**
    * 0..1 agreement between the two independent focal-length constraints
    * implied by the homography (`TableFrame.rectangleConsistency`).
@@ -83,7 +87,7 @@ const WEIGHTS = {
 } as const;
 
 export function scoreConfidence(inputs: ConfidenceInputs): ConfidenceBreakdown {
-  const tableFit = scoreTableFit(inputs.sideResidualsPx, inputs.imageDiagonalPx);
+  const tableFit = scoreTableFit(inputs.sideResidualsPx, inputs.imageDiagonalPx, inputs.lowEvidenceSideCount);
   const rectangle = clamp(inputs.rectangleConsistency, 0, 1);
   const ballDetection = scoreBallDetection(inputs.ballsFound, inputs.meanBallScore);
   const colorSeparation = scoreColorSeparation(inputs.colorMargin);
@@ -115,17 +119,44 @@ export function needsManualCorrection(
 }
 
 /**
+ * Multiplies `scoreTableFit`'s residual-based score down when too little of
+ * the table outline was actually seen (`table.ts#computeVisibleFractions`,
+ * `MIN_VISIBLE_FRACTION`) — one low-evidence side out of four is normal on an
+ * oblique photo and barely costs anything; two or more sharing that little
+ * real data is a materially weaker basis for the whole quad, not just twice
+ * as weak, so the penalty step is steep rather than linear in the count.
+ */
+const LOW_EVIDENCE_SIDE_PENALTY: Record<0 | 1 | 2 | 3 | 4, number> = {
+  0: 1,
+  1: 0.6,
+  2: 0.02,
+  3: 0.02,
+  4: 0.02,
+};
+
+/**
  * Cushion lines should sit within a fraction of a percent of the image
  * diagonal. A residual of 0.15% of the diagonal (≈3px on a 2000px diagonal)
  * scores ~0.5 — by then the quad is off by roughly a ball's width in mm at
  * typical scales, which is already at the edge of the 8mm geometric gate.
+ *
+ * `lowEvidenceSideCount` (`table.ts#computeVisibleFractions`) is a separate
+ * concern from the residuals: a side can be fitted *precisely* (tiny RMS)
+ * from only a small fraction of its true length, which residual size alone
+ * says nothing about — see that function's doc for why extrapolation
+ * distance needed its own signal rather than folding into the residual list.
  */
-export function scoreTableFit(residualsPx: readonly number[], imageDiagonalPx: number): number {
+export function scoreTableFit(
+  residualsPx: readonly number[],
+  imageDiagonalPx: number,
+  lowEvidenceSideCount: 0 | 1 | 2 | 3 | 4 = 0
+): number {
   if (residualsPx.length === 0 || !(imageDiagonalPx > 0)) return 0;
   const worst = Math.max(...residualsPx);
   if (!Number.isFinite(worst)) return 0;
   const relative = worst / imageDiagonalPx;
-  return clamp(Math.exp(-relative / 0.0022), 0, 1);
+  const residualScore = clamp(Math.exp(-relative / 0.0022), 0, 1);
+  return residualScore * LOW_EVIDENCE_SIDE_PENALTY[lowEvidenceSideCount];
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { cornerExtrapolationErrorPx, type SideFit } from './table';
-import type { Line2 } from './geometry';
+import { computeVisibleFractions, cornerExtrapolationErrorPx, type SideFit } from './table';
+import type { Line2, Vec2 } from './geometry';
 
 /**
  * `cornerExtrapolationErrorPx` — found necessary from real photos (2026-08-30,
@@ -74,5 +74,54 @@ describe('cornerExtrapolationErrorPx', () => {
     // x = 150 -> t = -150, which is 50px beyond rangeLo (-100).
     const beyondLo = cornerExtrapolationErrorPx({ x: 150, y: 0 }, s);
     expect(beyondHi).toBeCloseTo(beyondLo, 6);
+  });
+});
+
+/**
+ * `computeVisibleFractions` — proposed (2026-08-31) as part of a graceful-
+ * degradation policy for partially-visible cushions: a side fitted precisely
+ * but from only a small fraction of its own true (reconstructed) length is a
+ * materially weaker basis for the corner it contributes to than the same RMS
+ * from a well-covered side, which `sides[].rmsResidual` alone can't tell
+ * apart — see `MIN_VISIBLE_FRACTION`'s doc for how the 0.5 cutoff was chosen.
+ */
+describe('computeVisibleFractions', () => {
+  // A 100x100 synthetic square. sides[i] is the fit for corners[i] -> corners[(i+1)%4].
+  const corners: [Vec2, Vec2, Vec2, Vec2] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+
+  function sidesWithSpans(spans: [number, number, number, number]): [SideFit, SideFit, SideFit, SideFit] {
+    return spans.map((spanPx) => side({ spanPx })) as [SideFit, SideFit, SideFit, SideFit];
+  }
+
+  it("divides each side's span by its own reconstructed full length, in boundary order", () => {
+    const sides = sidesWithSpans([80, 100, 30, 50]);
+    const fractions = computeVisibleFractions(corners, sides, corners); // boundary === corners here
+    expect(fractions).toEqual([0.8, 1.0, 0.3, 0.5]);
+  });
+
+  it('clamps a span that (numerically) exceeds the reconstructed length to 1', () => {
+    const sides = sidesWithSpans([120, 100, 100, 100]);
+    const fractions = computeVisibleFractions(corners, sides, corners);
+    expect(fractions[0]).toBe(1);
+  });
+
+  it('matches edges by their corner points, not by array index — survives reordering/reversal', () => {
+    const sides = sidesWithSpans([80, 100, 30, 50]);
+    // Same 4 points as `corners`, but in a scrambled order — exactly what
+    // `orderQuadClockwise` can hand back (a rotation and/or a winding flip).
+    const boundary: [Vec2, Vec2, Vec2, Vec2] = [corners[2], corners[1], corners[0], corners[3]];
+    const fractions = computeVisibleFractions(corners, sides, boundary);
+    // boundary edge 0 (corners[2]->corners[1]) is the reverse of sides[1]'s
+    // own edge (corners[1]->corners[2]) -> spans[1]=100. Edge 1
+    // (corners[1]->corners[0]) reverses sides[0] -> spans[0]=80. Edge 2
+    // (corners[0]->corners[3]) reverses sides[3] -> spans[3]=50. Edge 3
+    // (corners[3]->corners[2]) reverses sides[2] -> spans[2]=30. All four
+    // reconstructed edges are still length 100 regardless of order.
+    expect(fractions).toEqual([1.0, 0.8, 0.5, 0.3]);
   });
 });

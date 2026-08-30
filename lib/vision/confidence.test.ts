@@ -20,6 +20,7 @@ import { CONFIDENCE_THRESHOLD } from './constants';
 const CLEAN: ConfidenceInputs = {
   sideResidualsPx: [0.9, 1.0, 1.1, 1.2],
   imageDiagonalPx: 1600,
+  lowEvidenceSideCount: 0,
   rectangleConsistency: 0.99,
   ballsFound: 4,
   meanBallScore: 0.85,
@@ -93,6 +94,20 @@ describe('scoreTableFit', () => {
   it('returns 0 for a non-finite residual (a side that could not be fitted)', () => {
     expect(scoreTableFit([1, 1, 1, Infinity], 2000)).toBe(0);
     expect(scoreTableFit([], 2000)).toBe(0);
+  });
+
+  it('defaults to no penalty for lowEvidenceSideCount (backward compatible)', () => {
+    expect(scoreTableFit([0.5, 0.6, 0.5, 0.7], 2000)).toBe(scoreTableFit([0.5, 0.6, 0.5, 0.7], 2000, 0));
+  });
+
+  it('barely penalises one low-evidence side but collapses the score for two or more', () => {
+    const residuals: [number, number, number, number] = [0.5, 0.6, 0.5, 0.7];
+    const clean = scoreTableFit(residuals, 2000, 0);
+    const oneWeak = scoreTableFit(residuals, 2000, 1);
+    const twoWeak = scoreTableFit(residuals, 2000, 2);
+    expect(oneWeak).toBeLessThan(clean);
+    expect(oneWeak).toBeGreaterThan(0.5 * clean); // "barely" — not a cliff
+    expect(twoWeak).toBeLessThan(0.05 * clean); // "collapses" — effectively uncertain
   });
 });
 

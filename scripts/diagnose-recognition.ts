@@ -62,8 +62,34 @@ async function main(): Promise<void> {
       `clothCoverage=${(table.clothCoverage * 100).toFixed(1)}% observedAspectRatio=${table.observedAspectRatio.toFixed(3)} ` +
       `cornersOutOfFrame=${table.cornersOutOfFrame} warnings=${JSON.stringify(table.warnings)}`
   );
+  // Each fitted line, in normal form (a*x + b*y + c = 0, a²+b²=1) plus the
+  // [rangeLo, rangeHi] its own points actually spanned along the line — the
+  // two numbers a bad line-intersection corner traces back to (see
+  // lib/vision/table.ts#cornerExtrapolationErrorPx).
   console.log(
-    `    sides: ${table.sides.map((s, i) => `#${i} rms=${s.rmsResidual.toFixed(2)}px n=${s.pointCount} span=${s.spanPx.toFixed(0)}px`).join(' | ')}`
+    `    sides: ${table.sides
+      .map(
+        (s, i) =>
+          `#${i} rms=${s.rmsResidual.toFixed(2)}px n=${s.pointCount} span=${s.spanPx.toFixed(0)}px ` +
+          `range=[${s.rangeLo.toFixed(0)},${s.rangeHi.toFixed(0)}] line=(a=${s.line.a.toFixed(3)},b=${s.line.b.toFixed(3)},c=${s.line.c.toFixed(1)})`
+      )
+      .join('\n           ')}`
+  );
+  // Corner i is lineIntersection(sides[i], sides[(i+1)%4]) before the
+  // clockwise reorder into `boundary` — cornerExtrapolationErrorPx below is
+  // already in `boundary`'s order (see table.ts), so it's shown alongside it.
+  console.log(
+    `    corners: ${table.detection.boundary
+      .map(
+        (c, i) =>
+          `#${i} (${c.x.toFixed(0)},${c.y.toFixed(0)}) extrapolationErrorPx=${table.cornerExtrapolationErrorPx[i].toFixed(1)}`
+      )
+      .join(' | ')}`
+  );
+  // Edge i runs boundary[i] -> boundary[(i+1)%4] — see table.ts#computeVisibleFractions.
+  console.log(
+    `    edges: ${table.visibleFraction.map((f, i) => `#${i} visibleFraction=${f.toFixed(2)}`).join(' | ')} ` +
+      `(lowEvidenceSideCount=${table.lowEvidenceSideCount})`
   );
 
   // --- Step 4: homography + pose ----------------------------------------------
@@ -115,15 +141,20 @@ async function main(): Promise<void> {
   console.log(`[6] classifyBallColors: margin=${assignment.margin.toFixed(3)} rationale="${assignment.rationale}"`);
 
   // --- Step 7: confidence --------------------------------------------------------
+  // Mirrors pipeline.ts's own scoreConfidence call exactly (including the
+  // corner-extrapolation/low-evidence-side signals) so this diagnostic's
+  // number matches what recognize() actually produces.
   const breakdown = scoreConfidence({
-    sideResidualsPx: table.sides.map((s) => s.rmsResidual),
+    sideResidualsPx: [...table.sides.map((s) => s.rmsResidual), ...table.cornerExtrapolationErrorPx],
     imageDiagonalPx: Math.hypot(image.width, image.height),
+    lowEvidenceSideCount: table.lowEvidenceSideCount,
     rectangleConsistency: frame.rectangleConsistency,
     ballsFound: chosen.length,
     meanBallScore: chosen.reduce((a, c) => a + c.score, 0) / chosen.length,
     colorMargin: assignment.margin,
     cameraHeightMm: frame.pose.centerMm.z,
     focalWasMeasured: frame.pose.intrinsics.source !== 'assumed',
+    radiusScaleCorrection: detection.radiusScaleCorrection,
   });
   console.log(
     `[7] scoreConfidence: ${JSON.stringify(Object.fromEntries(Object.entries(breakdown).map(([k, v]) => [k, Number(v.toFixed(3))])))}`
