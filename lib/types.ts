@@ -135,8 +135,26 @@ export type ShotTechnique = 'direct' | 'bank1' | 'bank2plus' | 'bankShot';
  * restitution and cloth friction can't be observed from a photo, so a
  * continuous number would be false precision. See plan Risk "힘(force) 물리
  * 예측 불가 변수 의존". Levels are meant to map to an observable/repeatable
- * cue like "쿠션 1개 돌 세기" .. "쿠션 3개 돌 세기". */
+ * cue like "쿠션 1개 돌 세기" .. "쿠션 3개 돌 세기" — see `FORCE_LEVEL_LABEL`
+ * for the concrete wording, which the UI must display alongside the bare
+ * number (a digit 1-5 alone gives the user nothing to calibrate against). */
 export type ForceLevel = 1 | 2 | 3 | 4 | 5;
+
+/**
+ * Human-reproducible description for each `ForceLevel`, in the "쿠션 N개
+ * 돌 세기" idiom the plan's engineering default specifies (얼마나 세게 치면
+ * 큐볼이 방해 없이 쿠션을 몇 번 튕겨 나오는지) — a billiard player's own,
+ * already-familiar way of calibrating stroke force, not a made-up scale.
+ * Shown next to the numeric level everywhere `Shot.forceLevel` is displayed
+ * (`ShotDiagram`) so the number alone never has to carry the meaning.
+ */
+export const FORCE_LEVEL_LABEL: Record<ForceLevel, string> = {
+  1: '아주 약하게 — 쿠션에 닿을까 말까 한 세기',
+  2: '약하게 — 쿠션 1개 정도 돌아 나오는 세기',
+  3: '보통 — 쿠션 2개 정도 도는 세기',
+  4: '강하게 — 쿠션 3개 정도 도는 세기',
+  5: '아주 강하게 — 쿠션 4개 이상 힘있게 도는 세기',
+};
 
 export interface Shot {
   /** Stable identifier for this shot candidate within a `RecognitionResult`'s results. */
