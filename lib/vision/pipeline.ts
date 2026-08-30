@@ -255,7 +255,13 @@ export async function recognize(
     // Step 6 — confidence.
     const dims = TABLE_DIMENSIONS_MM[settings.tableSize];
     const breakdown = scoreConfidence({
-      sideResidualsPx: table.sides.map((s) => s.rmsResidual),
+      // Corner-extrapolation error estimates are folded in alongside the
+      // per-side RMS values, not scored separately — `scoreTableFit` just
+      // takes the worst of whatever pixel-error signals it's handed, and a
+      // badly-extrapolated corner (table.ts#cornerExtrapolationErrorPx) is
+      // exactly that kind of signal: a corner can be wrong even when every
+      // individual side's own RMS looks fine.
+      sideResidualsPx: [...table.sides.map((s) => s.rmsResidual), ...table.cornerExtrapolationErrorPx],
       imageDiagonalPx: Math.hypot(image.width, image.height),
       rectangleConsistency: frame.rectangleConsistency,
       ballsFound: chosen.length,

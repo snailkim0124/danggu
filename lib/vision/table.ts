@@ -54,6 +54,15 @@ export interface SideFit {
   pointCount: number;
   /** Length of the visible (non-border) span of this side, in pixels. */
   spanPx: number;
+  /**
+   * The fitted points' own extent along the line direction (`rangeAlongLine`'s
+   * `(dx,dy) = (-line.b, line.a)` parametrisation), i.e.
+   * `spanPx === rangeHi - rangeLo`. Kept separately (not just the length) so
+   * a corner's position can be checked against where the *actual* evidence
+   * sits, not just how much of it there was — see `cornerExtrapolationErrorPx`.
+   */
+  rangeLo: number;
+  rangeHi: number;
 }
 
 export interface TableDetectionResult {
@@ -65,6 +74,16 @@ export interface TableDetectionResult {
   clothCoverage: number;
   /** Aspect ratio of the fitted quad's opposite-side midlines (long / short). */
   observedAspectRatio: number;
+  /**
+   * Per-corner (same order as `detection.boundary`) estimated positional
+   * error, in image pixels, from extrapolating that corner's two contributing
+   * side-fits past where they actually had evidence — see
+   * `cornerExtrapolationErrorPx`. 0 for a corner that fell within (was
+   * interpolated from) both sides' observed data. Feeds `scoreConfidence`
+   * (folded into the same signal `sides[].rmsResidual` does) rather than
+   * gating anything here directly.
+   */
+  cornerExtrapolationErrorPx: [number, number, number, number];
   warnings: string[];
 }
 
@@ -163,7 +182,37 @@ export function detectTableBoundary(
       corners.push(c);
     }
 
+    // See `cornerExtrapolationErrorPx`'s doc: a corner can land far outside
+    // the real table even when both contributing sides individually look
+    // like clean fits (the `starved` check above only looks at each side on
+    // its own) — a *precise* line can still be extrapolated arbitrarily far
+    // safely (a clean synthetic render's fitted line has ~0 RMS, so even a
+    // corner cropped out of frame costs nothing, exactly per this module's
+    // design goal), so distance alone can't be the criterion. This scales the
+    // extrapolation distance by the fit's own angular uncertainty instead,
+    // and — matching how every other soft signal here works (`rectangleConsistency`,
+    // side RMS) — feeds `scoreConfidence` rather than failing outright: a
+    // corner extrapolated from an imprecise line should read as *uncertain*,
+    // not silently wrong, but a real photo can still have exactly one dicey
+    // corner while the rest of the table is fine.
+    // Keyed by object identity, not index — `orderQuadClockwise` below
+    // reorders `corners` into `boundary`, and this must follow that same
+    // reordering rather than staying in "corner i = sides[i] ∩ sides[i+1]"
+    // construction order.
+    const cornerErrorByPoint = new Map<Vec2, number>(
+      corners.map((c, i) => [
+        c,
+        Math.max(cornerExtrapolationErrorPx(c, sides[i]), cornerExtrapolationErrorPx(c, sides[(i + 1) % 4])),
+      ])
+    );
+
     const boundary = orderQuadClockwise(corners);
+    const cornerExtrapolationErrorsPx = boundary.map((c) => cornerErrorByPoint.get(c) ?? 0) as [
+      number,
+      number,
+      number,
+      number,
+    ];
     const quadArea = polygonArea(boundary);
     if (!(quadArea > 0.5 * contourArea) || quadArea > 4 * contourArea) {
       warnings.push(
@@ -178,12 +227,22 @@ export function detectTableBoundary(
 
     const observedAspectRatio = quadAspectRatio(boundary);
 
+    const worstCornerErrorPx = Math.max(...cornerExtrapolationErrorsPx);
+    if (worstCornerErrorPx > diagonal * WARN_CORNER_ERROR_FRACTION) {
+      warnings.push(
+        `A corner was extrapolated from a noisy line fit far enough past its evidence to carry ` +
+          `~${worstCornerErrorPx.toFixed(0)}px of estimated positional error — this photo's table ` +
+          'fit confidence will reflect that.'
+      );
+    }
+
     return {
       detection: { boundary, size },
       sides,
       cornersOutOfFrame,
       clothCoverage,
       observedAspectRatio,
+      cornerExtrapolationErrorPx: cornerExtrapolationErrorsPx,
       warnings,
     };
   } finally {
@@ -332,22 +391,27 @@ function fitFourSides(
   const fits = lines.map((line, s): SideFit => {
     const pts = groups[s];
     if (pts.length < 2) {
-      return { line, rmsResidual: Infinity, pointCount: pts.length, spanPx: 0 };
+      return { line, rmsResidual: Infinity, pointCount: pts.length, spanPx: 0, rangeLo: 0, rangeHi: 0 };
     }
     const fit = fitLineTls(pts);
+    const { lo, hi } = rangeAlongLine(pts, fit.line);
     return {
       line: fit.line,
       rmsResidual: fit.rmsResidual,
       pointCount: pts.length,
-      spanPx: spanAlongLine(pts, fit.line),
+      spanPx: hi - lo,
+      rangeLo: lo,
+      rangeHi: hi,
     };
   });
 
   return fits as [SideFit, SideFit, SideFit, SideFit];
 }
 
-/** Extent of the points projected onto the line's direction, in pixels. */
-function spanAlongLine(points: readonly Vec2[], line: Line2): number {
+/** `[lo, hi]` of the points' projections onto the line's own direction —
+ * `(dx, dy) = (-line.b, line.a)`. `hi - lo` is the side's `spanPx`; the range
+ * itself (not just its length) is what `extrapolationRatio` needs. */
+function rangeAlongLine(points: readonly Vec2[], line: Line2): { lo: number; hi: number } {
   const dx = -line.b;
   const dy = line.a;
   let lo = Infinity;
@@ -357,8 +421,55 @@ function spanAlongLine(points: readonly Vec2[], line: Line2): number {
     if (t < lo) lo = t;
     if (t > hi) hi = t;
   }
-  return hi - lo;
+  return { lo, hi };
 }
+
+/**
+ * Estimated positional error, in image pixels, from extrapolating a corner
+ * past where its side's fitted points actually had evidence.
+ *
+ * Found necessary from real photos (2026-08-30, steep/close table shots —
+ * see `docs/testing/geometric-gate-guide.md` results and
+ * `scripts/visualize-boundary.ts`): a corner's two contributing sides can
+ * each individually look like a perfectly reasonable fit (single-digit-px
+ * RMS, a span well above `MIN_SIDE_SPAN_FRACTION`) while the line-intersection
+ * corner they produce still lands far outside the real table, because a tiny
+ * angular error in a short, only-mildly-noisy line segment swings wildly once
+ * projected far past where that segment actually had evidence. Per-side
+ * RMS/span numbers alone cannot see this — it only shows up by asking "how
+ * far beyond what we actually measured is this corner, and how much did that
+ * matter given how precise the line actually was?".
+ *
+ * That last clause is why this returns an *error estimate*, not a raw
+ * extrapolation distance or a distance/span ratio: distance alone can't be
+ * the criterion, because a genuinely precise line (a clean synthetic render's
+ * fitted line has ~0 RMS) can be extrapolated arbitrarily far with no real
+ * cost — a corner cropped out of frame entirely is exactly the case this
+ * module is designed to still recover (see the module docstring), and a
+ * first version of this check that rejected on distance alone broke that
+ * exact case (`pipeline.test.ts` "still recovers the table when a corner is
+ * cropped out of frame"). Treating the side's own span as the lever arm its
+ * angular precision was measured over, `rmsResidual / spanPx` is a rough
+ * angular-uncertainty proxy (radians, small-angle), so multiplying it by the
+ * actual extrapolation distance gives an error estimate that stays ~0 for a
+ * precise line no matter how far it's extrapolated, and grows for a noisy
+ * one.
+ */
+export function cornerExtrapolationErrorPx(corner: Vec2, side: SideFit): number {
+  const dx = -side.line.b;
+  const dy = side.line.a;
+  const t = corner.x * dx + corner.y * dy;
+  const beyond = Math.max(0, side.rangeLo - t, t - side.rangeHi);
+  if (beyond <= 0) return 0;
+  const span = Math.max(side.spanPx, 1);
+  return beyond * (side.rmsResidual / span);
+}
+
+/** Above this fraction of the image diagonal, a corner's estimated
+ * extrapolation error (`cornerExtrapolationErrorPx`) is worth calling out in
+ * `warnings` — purely informational, `scoreConfidence` is what actually acts
+ * on the underlying number. Same scale convention as `BORDER_MARGIN_FRACTION`. */
+const WARN_CORNER_ERROR_FRACTION = 0.01;
 
 /** The mm-space boundary of a rectified table, in the corner order of
  * `TableDetection.boundary`. Trivially the rectangle itself — `TableGeometry`
