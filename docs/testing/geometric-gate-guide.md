@@ -59,7 +59,7 @@ test-data/geometric-gate/
 
 ## 5. 정답 좌표 JSON 형식
 
-> ⚠️ **확인 필요**: 아래 형식은 `lib/types.ts`의 `Ball`/`TableGeometry` 타입과 plan의 Phase 5 설명을 기반으로 한 **예상 형식**입니다. `scripts/geometric-gate.ts` 측정 하네스가 아직 작성되지 않아 정확한 입력 형식과 대조 확인을 못 했습니다. **하네스가 만들어지면 그 스크립트가 실제로 읽는 형식과 이 문서를 대조해 맞춰주세요.** 지금은 이 형식대로 데이터를 모아두면 큰 틀에서 재사용 가능할 것입니다.
+> ✅ **확인 완료 (2026-08-30)**: `scripts/geometric-gate.ts` 하네스가 작성되었고, 아래 형식이 그 하네스가 실제로 읽는 `GroundTruth` 타입과 정확히 일치함을 확인했습니다. `scripts/fixtures/`의 합성(synthetic) 픽스처 5건으로 하네스 자체는 이미 검증됨(풀링 RMS 3.12mm, PASS). 이 문서대로 데이터를 모아 `test-data/geometric-gate/`(하네스 기본 경로)에 넣으면 바로 처리됩니다.
 
 ```json
 {
