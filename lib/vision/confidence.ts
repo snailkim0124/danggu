@@ -51,6 +51,10 @@ export interface ConfidenceInputs {
   cameraHeightMm: number;
   /** Whether the focal length was measured from the photo or assumed. */
   focalWasMeasured: boolean;
+  /** `BallDetectionResult.radiusScaleCorrection` — set only when ball
+   * detection needed to rescale its size expectations to find 4 balls at
+   * all. See `scorePoseSanity`'s doc. */
+  radiusScaleCorrection?: number;
 }
 
 export interface ConfidenceBreakdown {
@@ -83,7 +87,7 @@ export function scoreConfidence(inputs: ConfidenceInputs): ConfidenceBreakdown {
   const rectangle = clamp(inputs.rectangleConsistency, 0, 1);
   const ballDetection = scoreBallDetection(inputs.ballsFound, inputs.meanBallScore);
   const colorSeparation = scoreColorSeparation(inputs.colorMargin);
-  const poseSanity = scorePoseSanity(inputs.cameraHeightMm, inputs.focalWasMeasured);
+  const poseSanity = scorePoseSanity(inputs.cameraHeightMm, inputs.focalWasMeasured, inputs.radiusScaleCorrection);
 
   const overall = weightedGeometricMean([
     [tableFit, WEIGHTS.tableFit],
@@ -152,7 +156,17 @@ export function scoreColorSeparation(margin: number): number {
  * focal length is a soft penalty, not a failure: it degrades the correction's
  * accuracy without invalidating it.
  */
-export function scorePoseSanity(cameraHeightMm: number, focalWasMeasured: boolean): number {
+export function scorePoseSanity(
+  cameraHeightMm: number,
+  focalWasMeasured: boolean,
+  /** `BallDetectionResult.radiusScaleCorrection` — set only when ball
+   * detection's own pose-scale pass found fewer than 4 balls and had to
+   * rescale by this factor to find the rest (`balls.ts#resolveRadiusEvaluations`).
+   * Independent evidence the pose is unreliable beyond what camera
+   * height/focal-length-measured already capture, since a wrong focal length
+   * can still land in a plausible height range while still being wrong. */
+  radiusScaleCorrection?: number
+): number {
   if (!Number.isFinite(cameraHeightMm)) return 0;
   // A camera at or below the cloth is not "implausible", it is impossible —
   // the pose decomposition picked a mirrored solution. No smooth penalty:
@@ -170,7 +184,15 @@ export function scorePoseSanity(cameraHeightMm: number, focalWasMeasured: boolea
     const logGap = Math.abs(Math.log(Math.max(cameraHeightMm, 1) / target));
     height = clamp(Math.exp(-((logGap / 0.35) ** 2)), 0, 1);
   }
-  return height * (focalWasMeasured ? 1 : 0.75);
+  const base = height * (focalWasMeasured ? 1 : 0.75);
+  if (radiusScaleCorrection === undefined) return base;
+  // Same log-space decay shape as the height band above, just centred on "no
+  // correction needed" (factor of 1) instead of a plausible range — a 2x
+  // rescue costs a moderate amount, a 5x+ one collapses this factor almost
+  // entirely, same as an implausible camera height would.
+  const scaleLogGap = Math.abs(Math.log(Math.max(radiusScaleCorrection, 1e-6)));
+  const scalePenalty = clamp(Math.exp(-((scaleLogGap / 0.5) ** 2)), 0, 1);
+  return base * scalePenalty;
 }
 
 function weightedGeometricMean(pairs: ReadonlyArray<readonly [number, number]>): number {

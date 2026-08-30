@@ -126,6 +126,19 @@ describe('scorePoseSanity', () => {
     expect(scorePoseSanity(1400, false)).toBeLessThan(scorePoseSanity(1400, true));
     expect(scorePoseSanity(1400, false)).toBeGreaterThan(0.5);
   });
+
+  it('is unaffected by radiusScaleCorrection when undefined (no ball-detection rescue needed)', () => {
+    expect(scorePoseSanity(1400, true, undefined)).toBe(scorePoseSanity(1400, true));
+  });
+
+  it('penalises a ball-detection radius rescue proportionally to how large the correction was', () => {
+    const noRescue = scorePoseSanity(1400, true);
+    const smallRescue = scorePoseSanity(1400, true, 0.8); // e.g. one borderline ball
+    const bigRescue = scorePoseSanity(1400, true, 0.2); // matches the real photo-007 case
+    expect(smallRescue).toBeLessThan(noRescue);
+    expect(bigRescue).toBeLessThan(smallRescue);
+    expect(bigRescue).toBeLessThan(0.1);
+  });
 });
 
 describe('needsManualCorrection', () => {

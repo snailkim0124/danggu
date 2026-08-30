@@ -34,6 +34,20 @@
  * `expectedBallRadiusPx` at that specific spot, which sidesteps the "no global
  * radius range" problem entirely.
  *
+ * A second, independent failure mode (found from real photos, 2026-08-30
+ * test-data/geometric-gate batch): `expectedBallRadiusPx` is only as good as
+ * the recovered pose feeding it, and a bad focal-length estimate is wrong by
+ * one common multiplicative factor for the *whole* photo, not per ball — so a
+ * pose error can reject every genuinely-round, correctly-coloured ball at
+ * once (all consistently ~0.2-0.4x their expected size instead of ~1x)
+ * without any of them individually looking like junk. `resolveRadiusEvaluations`
+ * catches this after the main loop: if the pose's own scale doesn't find 4
+ * balls, it tries a population-median correction across every otherwise-valid
+ * blob and only keeps it if that finds strictly more balls than the naive
+ * scale did (never fewer — see that function's doc for a real case where an
+ * ungated version made things worse). This never changes anything for a
+ * photo whose pose was fine to begin with.
+ *
  * Classification (plan Phase 1 step 5)
  * ------------------------------------
  * Entirely relative — see `classifyBallColors`. No absolute hue/threshold
@@ -87,6 +101,16 @@ export interface BallDetectionResult {
   candidates: BallCandidate[];
   /** Blobs that were examined but rejected, with the reason (for debugging). */
   rejected: Array<{ center: Vec2; reason: string }>;
+  /**
+   * Set only when `resolveRadiusEvaluations`'s rescue pass fired (the pose's
+   * own scale found fewer than 4 candidates, and a population-median
+   * correction found enough at some other scale instead). A strong
+   * independent signal the recovered camera pose is unreliable — this is
+   * *not* folded into `BallCandidate.score`/`radiusRatio` (those already
+   * read as "well-formed at the scale we ended up trusting"), so a caller
+   * scoring overall confidence should treat this as its own penalty.
+   */
+  radiusScaleCorrection?: number;
 }
 
 /**
@@ -180,6 +204,7 @@ export function detectBalls(
     cv.findContours(objects, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
 
     const candidates: BallCandidate[] = [];
+    const radiusEvaluations: RadiusEvaluation[] = [];
     for (let i = 0; i < contours.size(); i++) {
       const contour = scope.track(contours.get(i));
       const area = cv.contourArea(contour);
@@ -233,17 +258,12 @@ export function detectBalls(
         rejected.push({ center: fit.center, reason: 'ball plane unreachable from the recovered pose' });
         continue;
       }
-      const radiusRatio = equivalentRadiusPx / expectedRadiusPx;
-      if (radiusRatio < RADIUS_RATIO_RANGE[0] || radiusRatio > RADIUS_RATIO_RANGE[1]) {
-        rejected.push({
-          center: fit.center,
-          reason: `area-equivalent radius ${equivalentRadiusPx.toFixed(1)}px is ${radiusRatio.toFixed(2)}x the expected ${expectedRadiusPx.toFixed(1)}px`,
-        });
-        continue;
-      }
 
-      // Sample well inside the blob's *shorter* axis so an elongated far-field
-      // ball still yields interior pixels rather than cushion or shadow.
+      // Colour is checked *before* the radius-ratio gate below (previously
+      // after) — both circularity and colour are decisions the recovered pose
+      // has no part in, so a blob failing either is rejected outright exactly
+      // as before, and the radius check is the only one deferred into
+      // `radiusEvaluations` for a possible `rescueScale` pass.
       const rgbSample = sampleDiscMedianRgb(rgb, image, fit.center, equivalentRadiusPx * 0.5);
       if (!rgbSample) {
         rejected.push({ center: fit.center, reason: 'no sampleable interior pixels' });
@@ -254,28 +274,143 @@ export function detectBalls(
         continue;
       }
 
-      // Both factors are independently necessary, so they multiply. The
-      // circle fit's residual is deliberately NOT scored: for a foreshortened
-      // ball it measures the ellipse's eccentricity, not the quality of the
-      // detection, and penalising it would down-rank every far-field ball.
-      const shape = Math.min(1, circularity);
-      const sizeAgreement = Math.exp(-(((radiusRatio - 1) / 0.3) ** 2));
-      candidates.push({
+      radiusEvaluations.push({
         center: fit.center,
-        radiusPx: equivalentRadiusPx,
-        expectedRadiusPx,
         circularity,
-        radiusRatio,
+        equivalentRadiusPx,
+        expectedRadiusPx,
+        radiusRatio: equivalentRadiusPx / expectedRadiusPx,
         rgb: rgbSample,
-        score: shape * sizeAgreement,
+      });
+    }
+
+    const { accepted, rejectedRadius, scaleUsed } = resolveRadiusEvaluations(radiusEvaluations, candidates.length);
+    candidates.push(...accepted);
+    for (const r of rejectedRadius) {
+      const rescueNote =
+        scaleUsed !== 1 ? ` (still ${(r.radiusRatio / scaleUsed).toFixed(2)}x after a ${scaleUsed.toFixed(2)}x rescue-scale attempt)` : '';
+      rejected.push({
+        center: r.center,
+        reason:
+          `area-equivalent radius ${r.equivalentRadiusPx.toFixed(1)}px is ${r.radiusRatio.toFixed(2)}x the expected ` +
+          `${r.expectedRadiusPx.toFixed(1)}px${rescueNote}`,
       });
     }
 
     candidates.sort((a, b) => b.score - a.score);
-    return { candidates, rejected };
+    return { candidates, rejected, radiusScaleCorrection: scaleUsed !== 1 ? scaleUsed : undefined };
   } finally {
     scope.dispose();
   }
+}
+
+/** A blob that passed every ball-or-not check (circularity, circle fit,
+ * colour) except the pose-predicted radius-ratio gate, kept around in case
+ * `resolveRadiusEvaluations` needs it for a `rescueScale` estimate. */
+export interface RadiusEvaluation {
+  center: Vec2;
+  circularity: number;
+  equivalentRadiusPx: number;
+  expectedRadiusPx: number;
+  /** `equivalentRadiusPx / expectedRadiusPx`, at the pose's own (uncorrected) scale. */
+  radiusRatio: number;
+  rgb: [number, number, number];
+}
+
+/** Minimum radius-evaluated blobs required before trusting a population
+ * median as a scale-correction factor — below this a "correction" would just
+ * be fitting the scale to one or two points, which isn't a rescue, it's
+ * assuming the answer. */
+const MIN_RESCUE_SAMPLES = 3;
+
+function buildCandidate(e: RadiusEvaluation, correctedRatio: number, expectedRadiusPx: number): BallCandidate {
+  // Both factors are independently necessary, so they multiply. The circle
+  // fit's residual is deliberately NOT scored: for a foreshortened ball it
+  // measures the ellipse's eccentricity, not the quality of the detection,
+  // and penalising it would down-rank every far-field ball.
+  const shape = Math.min(1, e.circularity);
+  const sizeAgreement = Math.exp(-(((correctedRatio - 1) / 0.3) ** 2));
+  return {
+    center: e.center,
+    radiusPx: e.equivalentRadiusPx,
+    expectedRadiusPx,
+    circularity: e.circularity,
+    radiusRatio: correctedRatio,
+    rgb: e.rgb,
+    score: shape * sizeAgreement,
+  };
+}
+
+/**
+ * Accept radius-evaluated blobs at the pose's own scale first (unchanged
+ * behaviour whenever that already finds enough balls). Only when it does not
+ * — `alreadyFound` (candidates from the main loop, e.g. `trySplitMergedBlob`)
+ * plus the naive accept count is still short of 4 — does this attempt a
+ * `rescueScale`: the recovered camera pose's focal length is a single number
+ * for the whole photo (`estimateIntrinsics`), so if it is wrong, every
+ * location's `expectedBallRadiusPx` is wrong by roughly the *same*
+ * multiplicative factor, not independently per ball. Found from real photos
+ * (2026-08-30 test-data/geometric-gate batch) where several genuinely
+ * ball-shaped, correctly-coloured blobs were all rejected at 0.1-0.4x their
+ * (badly overestimated) expected radius instead of the usual ~1x — i.e.
+ * consistently wrong in the same direction, which a single blob being
+ * genuine junk would not produce.
+ *
+ * The median of every evaluated blob's ratio is that common factor; blobs are
+ * re-tested against `RADIUS_RATIO_RANGE` using their ratio *relative to that
+ * median* instead of relative to 1.0. This is only ever *used* when it finds
+ * strictly more acceptable blobs than the naive scale did — a population
+ * whose radius errors are NOT actually one common bias (e.g. some blobs
+ * genuinely too small, others genuinely too large, for unrelated reasons)
+ * can otherwise make the median land somewhere that fits neither group,
+ * shifting already-good candidates out of range without recovering enough
+ * new ones to compensate (found by testing against the real photo batch
+ * this was built for — one case regressed from 3 accepted to 0 before this
+ * comparison was added). The naive result is always the floor.
+ *
+ * This never fires when the pose is fine (the naive pass already finds ≥4,
+ * so `alreadyFound` short-circuits before `radiusEvaluations` is even
+ * consulted) — it only changes behaviour for photos that would otherwise
+ * throw "found fewer than 4 balls", where degrading to a low-confidence
+ * manual-correction result is strictly better than refusing to recognise the
+ * photo at all.
+ */
+export function resolveRadiusEvaluations(
+  evaluations: readonly RadiusEvaluation[],
+  alreadyFound: number
+): { accepted: BallCandidate[]; rejectedRadius: RadiusEvaluation[]; scaleUsed: number } {
+  const naiveAccepted = evaluations.filter((e) => e.radiusRatio >= RADIUS_RATIO_RANGE[0] && e.radiusRatio <= RADIUS_RATIO_RANGE[1]);
+  const naiveResult = {
+    accepted: naiveAccepted,
+    rejectedRadius: evaluations.filter((e) => !naiveAccepted.includes(e)),
+    scaleUsed: 1,
+  };
+  if (alreadyFound + naiveAccepted.length >= 4 || evaluations.length < MIN_RESCUE_SAMPLES) {
+    return { ...naiveResult, accepted: naiveResult.accepted.map((e) => buildCandidate(e, e.radiusRatio, e.expectedRadiusPx)) };
+  }
+
+  const scale = median(evaluations.map((e) => e.radiusRatio));
+  const rescued = scale > 0 ? evaluations.filter((e) => {
+    const corrected = e.radiusRatio / scale;
+    return corrected >= RADIUS_RATIO_RANGE[0] && corrected <= RADIUS_RATIO_RANGE[1];
+  }) : [];
+
+  // The rescue can make things *worse* than the naive scale for a photo whose
+  // radius errors aren't actually a single systematic bias (e.g. some blobs
+  // too small, others too large, for unrelated reasons) — the population
+  // median then lands somewhere that fits neither group, potentially
+  // shifting already-good candidates out of range without recovering enough
+  // new ones to compensate. Never accept a worse outcome than the naive
+  // pass already had on its own.
+  if (rescued.length <= naiveAccepted.length) {
+    return { ...naiveResult, accepted: naiveResult.accepted.map((e) => buildCandidate(e, e.radiusRatio, e.expectedRadiusPx)) };
+  }
+  const rescuedSet = new Set(rescued);
+  return {
+    accepted: rescued.map((e) => buildCandidate(e, e.radiusRatio / scale, e.expectedRadiusPx * scale)),
+    rejectedRadius: evaluations.filter((e) => !rescuedSet.has(e)),
+    scaleUsed: scale,
+  };
 }
 
 /**
