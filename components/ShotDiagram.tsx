@@ -1,9 +1,10 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import type { Ball, BallColor, Shot, TableGeometry } from '@/lib/types';
+import type { Ball, Shot, TableGeometry } from '@/lib/types';
 import type { PathCalcShotResult } from '@/lib/uiTypes';
 import { railMarkerPoints } from '@/lib/railMarkers';
+import { BALL_DISPLAY_COLOR } from '@/lib/ballVisuals';
 import { BALL_RADIUS_MM, classifySpin, type SpinLabel } from '@/lib/pathcalc';
 import CueBallAim from './CueBallAim';
 import styles from './ShotDiagram.module.css';
@@ -16,13 +17,6 @@ interface Props {
   /** True when `shots` is a single closest-miss reference shot, not a normal recommendation. */
   fallback: boolean;
 }
-
-const BALL_DISPLAY_COLOR: Record<BallColor, string> = {
-  white: '#f5f5f5',
-  yellow: '#f4c430',
-  red1: '#d9291c',
-  red2: '#d9291c',
-};
 
 // "뱅킹"은 쓰지 않는다 — "1쿠션"/"2쿠션 이상"(적구를 먼저 맞고 쿠션을 나중에
 // 맞히는 경유 샷)과 "뱅크샷"(쿠션을 먼저 맞고 적구를 나중에 맞히는 빈쿠션치기/

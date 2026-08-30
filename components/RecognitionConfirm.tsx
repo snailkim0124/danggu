@@ -6,10 +6,11 @@ import { useMemo, useRef, useState } from 'react';
 // which breaks the client bundle from a 'use client' component).
 import { ballImagePointToTableMm, projectTablePoint } from '@/lib/vision/camera';
 import { BALL_RADIUS_MM } from '@/lib/vision/constants';
-import { TABLE_DIMENSIONS_MM, type BallColor, type Point, type RecognitionResult } from '@/lib/types';
+import { TABLE_DIMENSIONS_MM, type Point, type RecognitionResult } from '@/lib/types';
 import type { PixelDetection } from '@/lib/uiTypes';
 import { computeOrientationCandidates } from '@/lib/orientationFlip';
-import { railMarkerPoints } from '@/lib/railMarkers';
+import { BALL_DISPLAY_COLOR, BALL_LABEL } from '@/lib/ballVisuals';
+import BallPositionEditor from './BallPositionEditor';
 import styles from './RecognitionConfirm.module.css';
 
 interface Props {
@@ -20,20 +21,6 @@ interface Props {
   onConfirm: (corrected: RecognitionResult) => void;
   onBack: () => void;
 }
-
-const BALL_DISPLAY_COLOR: Record<BallColor, string> = {
-  white: '#f5f5f5',
-  yellow: '#f4c430',
-  red1: '#d9291c',
-  red2: '#d9291c',
-};
-
-const BALL_LABEL: Record<BallColor, string> = {
-  white: '흰공',
-  yellow: '노랑공',
-  red1: '빨간공',
-  red2: '빨간공',
-};
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -55,8 +42,6 @@ function clamp(value: number, min: number, max: number): number {
  */
 export default function RecognitionConfirm({ photoUrl, recognition, pixelDetection, onConfirm, onBack }: Props) {
   const [orientationFlipped, setOrientationFlipped] = useState(false);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const editorSvgRef = useRef<SVGSVGElement>(null);
   const photoSvgRef = useRef<SVGSVGElement>(null);
 
   // The cushion-NOSE line in image pixels — `pixelDetection.tableBoundary` is
@@ -136,82 +121,7 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
   }
 
   const { widthMm, heightMm } = TABLE_DIMENSIONS_MM[recognition.table.size];
-
-  // 2D top-down drag surface geometry — deliberately mirrors ShotDiagram's
-  // mm-space rendering (same boundary polygon, same Y-flip) so the table looks
-  // and is oriented identically here and on the results screen.
   const boundary = recognition.table.boundary;
-  const boundaryXs = boundary.map((p) => p.x);
-  const boundaryYs = boundary.map((p) => p.y);
-  const editorMargin = BALL_RADIUS_MM * 3;
-  const editorMinX = Math.min(...boundaryXs) - editorMargin;
-  const editorMaxX = Math.max(...boundaryXs) + editorMargin;
-  const editorMinY = Math.min(...boundaryYs) - editorMargin;
-  const editorMaxY = Math.max(...boundaryYs) + editorMargin;
-  const flipK = editorMinY + editorMaxY;
-  const boundaryPoints = boundary.map((p) => `${p.x},${p.y}`).join(' ');
-  const railDots = railMarkerPoints(boundary);
-  // True-to-scale ball size (사용자 피드백: 실제 비율보다 크게 그려서 공 위치가
-  // 헷갈림) — the viewBox is already in real mm, so the ball's own real radius
-  // is the correct SVG radius. The drag *hit target* stays deliberately
-  // larger than the visible ball (a finger is bigger than a true-scale ball
-  // rendered on a phone screen), but that circle is invisible so it doesn't
-  // mislead position judgement the way an oversized visible ball would.
-  const ballDisplayRadius = BALL_RADIUS_MM;
-  const dragHandleRadius = BALL_RADIUS_MM * 1.8;
-  // Rail dots are a purely decorative visual size, independent of the
-  // (now true-to-scale, much smaller) ball radius — tying it to `ballDisplayRadius`
-  // would shrink these to near-invisible.
-  const railDotRadius = (editorMaxX - editorMinX) * 0.006;
-
-  /** Convert a pointer event's screen position into the same mm-space
-   * `positions` are stored in — via the SVG's own screen CTM, which already
-   * accounts for viewBox scaling and responsive sizing, then undoing the
-   * inner `<g>`'s Y-flip (a self-inverse reflection, so the same formula
-   * applies both ways: `local = flipK - root`). */
-  function clientToMm(clientX: number, clientY: number): Point | null {
-    const svg = editorSvgRef.current;
-    if (!svg) return null;
-    const ctm = svg.getScreenCTM();
-    if (!ctm) return null;
-    const pt = svg.createSVGPoint();
-    pt.x = clientX;
-    pt.y = clientY;
-    const root = pt.matrixTransform(ctm.inverse());
-    return { x: root.x, y: flipK - root.y };
-  }
-
-  function moveBallTo(id: string, clientX: number, clientY: number) {
-    const mm = clientToMm(clientX, clientY);
-    if (!mm) return;
-    setPositions((prev) => ({
-      ...prev,
-      [id]: {
-        x: clamp(mm.x, BALL_RADIUS_MM, widthMm - BALL_RADIUS_MM),
-        y: clamp(mm.y, BALL_RADIUS_MM, heightMm - BALL_RADIUS_MM),
-      },
-    }));
-  }
-
-  function handlePointerDown(id: string, e: React.PointerEvent<SVGCircleElement>) {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setDraggingId(id);
-    moveBallTo(id, e.clientX, e.clientY);
-  }
-
-  function handlePointerMove(id: string, e: React.PointerEvent<SVGCircleElement>) {
-    // `setPointerCapture` above already routes every subsequent move for this
-    // pointerId back to this exact circle regardless of where the finger
-    // physically is, so no extra "is this still the active drag" check is
-    // needed — and skipping it means two balls can be dragged at once (two
-    // simultaneous touches) without one drag clobbering the other.
-    moveBallTo(id, e.clientX, e.clientY);
-  }
-
-  function handlePointerUp(e: React.PointerEvent<SVGCircleElement>) {
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    setDraggingId(null);
-  }
 
   /** Screen position → the photo overlay SVG's own pixel space (its viewBox
    * is `0 0 imageWidth imageHeight` with no inner transform, so this is
@@ -388,63 +298,14 @@ export default function RecognitionConfirm({ photoUrl, recognition, pixelDetecti
           <span className={styles.correctionTitle}>공을 끌어서 실제 위치로 옮기기</span>
         </div>
 
-        <div className={styles.editorWrap}>
-          <svg
-            ref={editorSvgRef}
-            viewBox={`${editorMinX} ${editorMinY} ${editorMaxX - editorMinX} ${editorMaxY - editorMinY}`}
-            className={styles.editorSvg}
-          >
-            <g transform={`translate(0, ${flipK}) scale(1, -1)`}>
-              <polygon points={boundaryPoints} className={styles.editorTable} />
-
-              {railDots.map((p, i) => (
-                <circle key={`rail-${i}`} cx={p.x} cy={p.y} r={railDotRadius} className={styles.editorRailDot} />
-              ))}
-
-              {pixelDetection.balls.map((ball) => {
-                const pos = positions[ball.id];
-                if (!pos) return null;
-                return (
-                  <g key={ball.id}>
-                    {/* Larger invisible hit target — the true-to-scale ball
-                     * circle below is too small to grab reliably with a
-                     * finger, especially near the table's long-side scale. */}
-                    <circle
-                      cx={pos.x}
-                      cy={pos.y}
-                      r={dragHandleRadius}
-                      className={styles.dragHandle}
-                      onPointerDown={(e) => handlePointerDown(ball.id, e)}
-                      onPointerMove={(e) => handlePointerMove(ball.id, e)}
-                      onPointerUp={handlePointerUp}
-                      onPointerCancel={handlePointerUp}
-                    >
-                      <title>{BALL_LABEL[ball.color]}</title>
-                    </circle>
-                    <circle
-                      cx={pos.x}
-                      cy={pos.y}
-                      r={ballDisplayRadius}
-                      fill={BALL_DISPLAY_COLOR[ball.color]}
-                      stroke={draggingId === ball.id ? '#0a6cff' : '#222'}
-                      strokeWidth={ballDisplayRadius * (draggingId === ball.id ? 0.22 : 0.12)}
-                      className={styles.draggableBall}
-                    />
-                  </g>
-                );
-              })}
-            </g>
-          </svg>
-        </div>
-
-        <ul className={styles.legend}>
-          {pixelDetection.balls.map((ball) => (
-            <li key={ball.id} className={styles.legendItem}>
-              <span className={styles.ballSwatch} style={{ background: BALL_DISPLAY_COLOR[ball.color] }} aria-hidden="true" />
-              {BALL_LABEL[ball.color]}
-            </li>
-          ))}
-        </ul>
+        <BallPositionEditor
+          boundary={boundary}
+          widthMm={widthMm}
+          heightMm={heightMm}
+          balls={pixelDetection.balls.map((b) => ({ id: b.id, color: b.color }))}
+          positions={positions}
+          onPositionsChange={setPositions}
+        />
       </div>
 
       <div className={styles.actions}>

@@ -24,6 +24,12 @@
   color: #0a6cff;
 }
 
+.headerNav {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
 .main {
   flex: 1;
   display: flex;

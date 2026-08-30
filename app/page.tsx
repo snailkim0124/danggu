@@ -86,9 +86,14 @@ export default function Home() {
     <div className={styles.page}>
       <header className={styles.header}>
         <h1 className={styles.headerTitle}>당구 샷 가이드</h1>
-        <Link href="/settings" className={styles.settingsLink}>
-          설정
-        </Link>
+        <nav className={styles.headerNav}>
+          <Link href="/manual-setup" className={styles.settingsLink}>
+            수동 배치
+          </Link>
+          <Link href="/settings" className={styles.settingsLink}>
+            설정
+          </Link>
+        </nav>
       </header>
 
       <main className={styles.main}>
