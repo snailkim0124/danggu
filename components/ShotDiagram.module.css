@@ -129,25 +129,6 @@
   font-weight: 600;
 }
 
-.detailRowWide {
-  /* Force needs the full panel width for its text description, unlike the
-   * short 기술/각도 values that comfortably share the 2-column grid. */
-  grid-column: 1 / -1;
-}
-
-.forceDetail {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.forceLabel {
-  font-weight: 500;
-  text-align: right;
-}
-
 .forceScale {
   display: inline-flex;
   gap: 4px;

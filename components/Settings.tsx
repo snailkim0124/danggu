@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react';
 import {
   DEFAULT_SKILL_PROFILE,
+  FORCE_LEVEL_LABEL,
   SKILL_CATEGORIES,
   SKILL_CATEGORY_LABEL,
+  type ForceLevel,
   type Settings as SettingsType,
   type SkillLevel,
   type TableSize,
@@ -21,6 +23,7 @@ const DEFAULT_SETTINGS: SettingsType = {
 };
 
 const SKILL_LEVELS: SkillLevel[] = [1, 2, 3, 4, 5];
+const FORCE_LEVELS: ForceLevel[] = [1, 2, 3, 4, 5];
 
 /**
  * Cue ball color + table size preset editor. GETs `/api/settings` on mount,
@@ -154,6 +157,22 @@ export default function Settings() {
             </div>
           );
         })}
+      </fieldset>
+
+      <fieldset className={styles.group}>
+        <legend>힘 단계 설명</legend>
+        <p className={styles.skillHint}>
+          추천 샷 결과 화면에 나오는 힘 단계(1~5)의 기준입니다. 절대적인 세기가 아니라, 아무것도 없을 때 이
+          정도로 치면 큐볼이 쿠션을 몇 번쯤 돌아 나오는지로 감을 잡으시면 됩니다.
+        </p>
+        <dl className={styles.forceLegend}>
+          {FORCE_LEVELS.map((level) => (
+            <div key={level} className={styles.forceLegendRow}>
+              <dt className={styles.forceLegendLevel}>{level}</dt>
+              <dd className={styles.forceLegendText}>{FORCE_LEVEL_LABEL[level]}</dd>
+            </div>
+          ))}
+        </dl>
       </fieldset>
 
       <p className={styles.saveStatus} role="status">
