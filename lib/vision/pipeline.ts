@@ -263,6 +263,7 @@ export async function recognize(
       // individual side's own RMS looks fine.
       sideResidualsPx: [...table.sides.map((s) => s.rmsResidual), ...table.cornerExtrapolationErrorPx],
       imageDiagonalPx: Math.hypot(image.width, image.height),
+      lowEvidenceSideCount: table.lowEvidenceSideCount,
       rectangleConsistency: frame.rectangleConsistency,
       ballsFound: chosen.length,
       meanBallScore: chosen.reduce((a, c) => a + c.score, 0) / chosen.length,

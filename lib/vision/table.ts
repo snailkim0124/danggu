@@ -84,6 +84,16 @@ export interface TableDetectionResult {
    * gating anything here directly.
    */
   cornerExtrapolationErrorPx: [number, number, number, number];
+  /**
+   * Per-side (same order as `detection.boundary`'s edges — edge `i` runs
+   * `boundary[i] -> boundary[(i+1)%4]`), how much of that edge's own
+   * reconstructed length was actually observed vs. extrapolated —
+   * `sides[i].spanPx / distance(boundary[i], boundary[(i+1)%4])`, clamped to
+   * `[0, 1]`. See `MIN_VISIBLE_FRACTION`.
+   */
+  visibleFraction: [number, number, number, number];
+  /** Count of edges below `MIN_VISIBLE_FRACTION` — feeds `scoreConfidence`. */
+  lowEvidenceSideCount: 0 | 1 | 2 | 3 | 4;
   warnings: string[];
 }
 
@@ -97,6 +107,29 @@ const BORDER_MARGIN_FRACTION = 0.004;
 const MIN_SIDE_POINTS = 25;
 /** Minimum visible extent of a cushion side, as a fraction of the image diagonal. */
 const MIN_SIDE_SPAN_FRACTION = 0.06;
+
+/**
+ * Below this fraction of a side's own *reconstructed* length (not the whole
+ * image diagonal — see `MIN_SIDE_SPAN_FRACTION` above, a coarser absolute
+ * floor that catches near-zero evidence), a side counts as "low evidence" for
+ * `lowEvidenceSideCount`. One low-evidence side still gets a real vote in the
+ * line fit (three well-seen sides plus one short one is normal on an oblique
+ * photo); two or more sharing that little real data is a materially weaker
+ * basis for the whole quad, so `scoreTableFit` treats that combination much
+ * more harshly (see its doc).
+ *
+ * 0.5 was chosen empirically against every fixture available when this was
+ * added (`scripts/fixtures/`, `scripts/fixtures/photos/`,
+ * `test-data/geometric-gate/`, 2026-08-31): the synthetic
+ * "corner cropped out of frame" case (`synthetic-002-long-side`, a real
+ * regression test for this module) has its two shortest sides right at
+ * 0.55, and both real photos in `scripts/fixtures/photos/` stay at 0.59+ on
+ * every side — 0.5 sits just under both without having to loosen either.
+ * Most `test-data/geometric-gate` photos (shot from the steep, close angle
+ * documented in `docs/testing/geometric-gate-guide.md`) fall well under it on
+ * 2+ sides, which is the real-world case this constant exists to catch.
+ */
+const MIN_VISIBLE_FRACTION = 0.5;
 
 /**
  * Detect the table boundary from a pre-computed cloth mask.
@@ -236,6 +269,16 @@ export function detectTableBoundary(
       );
     }
 
+    const visibleFraction = computeVisibleFractions(corners as [Vec2, Vec2, Vec2, Vec2], sides, boundary);
+    const lowEvidenceSideCount = visibleFraction.filter((f) => f < MIN_VISIBLE_FRACTION).length as 0 | 1 | 2 | 3 | 4;
+    if (lowEvidenceSideCount >= 2) {
+      warnings.push(
+        `${lowEvidenceSideCount} of 4 cushion sides had less than ${(MIN_VISIBLE_FRACTION * 100).toFixed(0)}% ` +
+          `of their own reconstructed length actually visible (fractions: ${visibleFraction.map((f) => f.toFixed(2)).join(', ')}) ` +
+          '— too little of the table outline was seen for this quad to be trusted; confidence will reflect that.'
+      );
+    }
+
     return {
       detection: { boundary, size },
       sides,
@@ -243,6 +286,8 @@ export function detectTableBoundary(
       clothCoverage,
       observedAspectRatio,
       cornerExtrapolationErrorPx: cornerExtrapolationErrorsPx,
+      visibleFraction,
+      lowEvidenceSideCount,
       warnings,
     };
   } finally {
@@ -470,6 +515,44 @@ export function cornerExtrapolationErrorPx(corner: Vec2, side: SideFit): number 
  * `warnings` — purely informational, `scoreConfidence` is what actually acts
  * on the underlying number. Same scale convention as `BORDER_MARGIN_FRACTION`. */
 const WARN_CORNER_ERROR_FRACTION = 0.01;
+
+/**
+ * For each edge of `boundary` (edge `i`: `boundary[i] -> boundary[(i+1)%4]`),
+ * how much of that edge's own reconstructed length (`distance` between its
+ * two corners) the matching `sides[]` fit actually had evidence for
+ * (`spanPx`), clamped to `[0, 1]`.
+ *
+ * `sides[i]` is the fit for `corners[i] -> corners[(i+1)%4]` in the
+ * *construction* order `detectTableBoundary` built them in — `boundary` is
+ * `orderQuadClockwise(corners)`, which may rotate and/or reverse that order,
+ * so edges are matched between the two arrays by their (unordered) pair of
+ * corner points rather than by index.
+ */
+export function computeVisibleFractions(
+  corners: readonly [Vec2, Vec2, Vec2, Vec2],
+  sides: readonly [SideFit, SideFit, SideFit, SideFit],
+  boundary: readonly [Vec2, Vec2, Vec2, Vec2]
+): [number, number, number, number] {
+  const edgeSideByPoints = new Map<Vec2, Map<Vec2, SideFit>>();
+  for (let i = 0; i < 4; i++) {
+    const a = corners[i];
+    const b = corners[(i + 1) % 4];
+    for (const [p, q] of [
+      [a, b],
+      [b, a],
+    ] as const) {
+      if (!edgeSideByPoints.has(p)) edgeSideByPoints.set(p, new Map());
+      edgeSideByPoints.get(p)!.set(q, sides[i]);
+    }
+  }
+  return boundary.map((p, j) => {
+    const q = boundary[(j + 1) % 4];
+    const side = edgeSideByPoints.get(p)?.get(q);
+    const fullLength = distance(p, q);
+    if (!side || !(fullLength > 1e-6)) return 1;
+    return Math.min(1, side.spanPx / fullLength);
+  }) as [number, number, number, number];
+}
 
 /** The mm-space boundary of a rectified table, in the corner order of
  * `TableDetection.boundary`. Trivially the rectangle itself — `TableGeometry`
