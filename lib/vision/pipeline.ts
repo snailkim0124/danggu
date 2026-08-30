@@ -269,6 +269,7 @@ export async function recognize(
       colorMargin: assignment.margin,
       cameraHeightMm: frame.pose.centerMm.z,
       focalWasMeasured: frame.pose.intrinsics.source !== 'assumed',
+      radiusScaleCorrection: detection.radiusScaleCorrection,
     });
 
     if (table.cornersOutOfFrame > 0) {

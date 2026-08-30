@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyBallColors, colorFeatures } from './balls';
+import { classifyBallColors, colorFeatures, resolveRadiusEvaluations, type RadiusEvaluation } from './balls';
 
 /**
  * Colour classification must survive lighting changes, because the failure it
@@ -170,5 +170,78 @@ describe('colorFeatures', () => {
     const dim = colorFeatures(relight(NEUTRAL.yellow, [1, 1, 1], 0.5));
     expect(dim.blueShare).toBeCloseTo(bright.blueShare, 2);
     expect(dim.hue).toBeCloseTo(bright.hue, 0);
+  });
+});
+
+/**
+ * `resolveRadiusEvaluations` — found necessary from real photos (2026-08-30,
+ * test-data/geometric-gate batch): the pose's own `expectedBallRadiusPx` can
+ * be wrong by a single common multiplicative factor across a whole photo
+ * (the recovered focal length is one number per photo, not per location), so
+ * several genuinely-round, correctly-coloured balls all get rejected at e.g.
+ * 0.2-0.4x their expected radius instead of the usual ~1x. See balls.ts's
+ * doc on this function for the full reasoning.
+ */
+function evaluation(radiusRatio: number, overrides: Partial<RadiusEvaluation> = {}): RadiusEvaluation {
+  const expectedRadiusPx = 20;
+  return {
+    center: { x: 0, y: 0 },
+    circularity: 0.9,
+    equivalentRadiusPx: radiusRatio * expectedRadiusPx,
+    expectedRadiusPx,
+    radiusRatio,
+    rgb: [200, 40, 40],
+    ...overrides,
+  };
+}
+
+describe('resolveRadiusEvaluations', () => {
+  it('uses the naive (pose) scale unchanged when it already finds enough balls', () => {
+    const evals = [evaluation(1.0), evaluation(1.05), evaluation(0.95)];
+    const result = resolveRadiusEvaluations(evals, 1); // +1 already found (e.g. a merged-blob split)
+    expect(result.scaleUsed).toBe(1);
+    expect(result.accepted).toHaveLength(3);
+    expect(result.rejectedRadius).toHaveLength(0);
+  });
+
+  it('does not attempt a rescue below MIN_RESCUE_SAMPLES, even with too few balls', () => {
+    // Only 2 evaluated blobs total — not enough to trust a population median.
+    const evals = [evaluation(0.2), evaluation(0.25)];
+    const result = resolveRadiusEvaluations(evals, 0);
+    expect(result.scaleUsed).toBe(1);
+    expect(result.accepted).toHaveLength(0);
+    expect(result.rejectedRadius).toHaveLength(2);
+  });
+
+  it('rescues balls that are all wrong by the same common factor', () => {
+    // All four genuinely consistent at ~0.25x — a single systematic bias,
+    // exactly the case a bad focal-length estimate produces.
+    const evals = [evaluation(0.25), evaluation(0.24), evaluation(0.26), evaluation(0.23)];
+    const result = resolveRadiusEvaluations(evals, 0);
+    expect(result.accepted).toHaveLength(4);
+    expect(result.scaleUsed).toBeCloseTo(0.245, 2);
+    // The corrected ratio (radiusRatio / scale) should now read close to 1.0,
+    // i.e. safely inside RADIUS_RATIO_RANGE ([0.6, 1.6]) around its centre.
+    for (const c of result.accepted) {
+      expect(c.radiusRatio).toBeGreaterThan(0.85);
+      expect(c.radiusRatio).toBeLessThan(1.15);
+    }
+  });
+
+  it('never accepts fewer balls than the naive scale already found (regression test)', () => {
+    // The exact shape of bug found while building this: 3 genuinely good
+    // balls (ratio ~1.0) and 3 unrelated junk blobs (ratio ~0.15) — an equal
+    // split, so their population median (0.575) lands *between* the two
+    // clusters, fitting neither: corrected for the good balls that's 1.74
+    // (just outside RADIUS_RATIO_RANGE's 1.6 ceiling), and for the junk 0.26
+    // (below its 0.6 floor). An earlier version of this function trusted the
+    // rescue unconditionally whenever it was attempted and returned 0
+    // candidates here instead of falling back to the 3 good ones.
+    const good = [evaluation(1.0), evaluation(1.0), evaluation(1.0)];
+    const junk = [evaluation(0.15), evaluation(0.15), evaluation(0.15)];
+    const result = resolveRadiusEvaluations([...good, ...junk], 0);
+    expect(result.scaleUsed).toBe(1);
+    expect(result.accepted).toHaveLength(3);
+    expect(result.accepted.every((c) => c.radiusRatio === 1.0)).toBe(true);
   });
 });
