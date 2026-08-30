@@ -112,6 +112,27 @@ const MIN_CIRCULARITY = 0.55;
 const MERGED_BLOB_AREA_RANGE: [number, number] = [1.3, 4.5];
 
 /**
+ * How close (on the 0..179 hue wheel) a candidate's sampled colour may sit to
+ * the cloth's own hue before it's rejected as spurious. A glare speck or dust
+ * fleck can end up excluded from the cloth mask on saturation/value alone
+ * (not hue — see `lib/vision/cloth.ts`'s own note on saturation instability
+ * near black/white), forming a small "not cloth" blob that is otherwise
+ * circular and ball-radius-sized enough to pass every other check, both here
+ * and in `trySplitMergedBlob`. Once its own disc sample is averaged with the
+ * ordinary felt around such a tiny fleck, the result reads as essentially
+ * cloth-coloured — which no real ball (white, yellow, red) ever does; all
+ * three sit far outside this margin from a typical blue-cloth hue.
+ */
+const CLOTH_HUE_REJECT_MARGIN = 25;
+
+/** True when `rgb` is close enough to `clothHue` that it's almost certainly
+ * sampling cloth (or a glare/dust speck averaged with the cloth around it),
+ * not any real ball. See `CLOTH_HUE_REJECT_MARGIN`'s doc. */
+function isClothColoured(rgb: readonly [number, number, number], clothHue: number): boolean {
+  return hueDistance(colorFeatures(rgb).hue, clothHue) < CLOTH_HUE_REJECT_MARGIN;
+}
+
+/**
  * Find ball candidates inside the detected table quad.
  *
  * `clothMask` is the 8UC1 cloth mask; `rgb` is the 8UC3 RGB image. Both stay
@@ -124,7 +145,11 @@ export function detectBalls(
   image: RgbaImage,
   frame: TableFrame,
   tableQuad: readonly [Vec2, Vec2, Vec2, Vec2],
-  ballRadiusMm: number
+  ballRadiusMm: number,
+  /** Dominant cloth hue (`ClothEstimate.hue`, `cloth.ts`) — used only by
+   * `trySplitMergedBlob` to reject a Hough-found "ball" that's actually
+   * sampling plain cloth. */
+  clothHue: number
 ): BallDetectionResult {
   const scope = new CvScope();
   const rejected: Array<{ center: Vec2; reason: string }> = [];
@@ -180,7 +205,7 @@ export function detectBalls(
       const singleBallAreaPx = roughExpectedRadiusPx > 0 ? Math.PI * roughExpectedRadiusPx ** 2 : 0;
       const areaRatio = singleBallAreaPx > 0 ? area / singleBallAreaPx : 0;
       if (areaRatio >= MERGED_BLOB_AREA_RANGE[0] && areaRatio <= MERGED_BLOB_AREA_RANGE[1]) {
-        const split = trySplitMergedBlob(cv, scope, rgb, image, frame, contour, ballRadiusMm, inner);
+        const split = trySplitMergedBlob(cv, scope, rgb, image, frame, contour, ballRadiusMm, inner, clothHue);
         if (split.length >= 2) {
           candidates.push(...split);
           continue;
@@ -222,6 +247,10 @@ export function detectBalls(
       const rgbSample = sampleDiscMedianRgb(rgb, image, fit.center, equivalentRadiusPx * 0.5);
       if (!rgbSample) {
         rejected.push({ center: fit.center, reason: 'no sampleable interior pixels' });
+        continue;
+      }
+      if (isClothColoured(rgbSample, clothHue)) {
+        rejected.push({ center: fit.center, reason: 'sampled colour is essentially cloth-coloured' });
         continue;
       }
 
@@ -276,7 +305,8 @@ function trySplitMergedBlob(
   frame: TableFrame,
   contour: InstanceType<CV['Mat']>,
   ballRadiusMm: number,
-  inner: readonly Vec2[]
+  inner: readonly Vec2[],
+  clothHue: number
 ): BallCandidate[] {
   const rect = cv.boundingRect(contour);
   const padding = Math.max(4, Math.round(Math.max(rect.width, rect.height) * 0.15));
@@ -304,7 +334,19 @@ function trySplitMergedBlob(
     circles,
     cv.HOUGH_GRADIENT,
     1,
-    expectedAtCenter * 1.2, // minDist between circle centres — just under one ball apart
+    // minDist between circle centres, kept deliberately low (below the ~2x
+    // radius apart two genuinely touching balls' true centres sit at). Under
+    // an oblique enough angle their *apparent* separation compresses well
+    // below that 2x figure too (the same perspective effect
+    // `expectedBallRadiusPx`'s doc already warns single-ball-radius
+    // predictions need sphere-aware math for) — verified against a real
+    // rendered case at ~1.4x. That leaves too little headroom above the
+    // ~1.2x a jittered duplicate fit of one real ball sits at for `minDist`
+    // to safely tell the two apart on distance alone, so this stays low
+    // (favouring "find both circles") and the *scored, colour-aware*
+    // dedup below — not this geometry-only Hough parameter — is what
+    // actually discards a same-ball duplicate.
+    expectedAtCenter * 1.2,
     80, // Canny high threshold (low threshold is half this, per HOUGH_GRADIENT's contract)
     // Accumulator threshold, well below the ~100 default: a ball whose rim is
     // half-occluded by the other ball it's touching casts far fewer votes
@@ -330,6 +372,7 @@ function trySplitMergedBlob(
 
     const rgbSample = sampleDiscMedianRgb(rgb, image, center, r * 0.5);
     if (!rgbSample) continue;
+    if (isClothColoured(rgbSample, clothHue)) continue;
 
     const sizeAgreement = Math.exp(-(((radiusRatio - 1) / 0.3) ** 2));
     found.push({
@@ -350,13 +393,43 @@ function trySplitMergedBlob(
     });
   }
 
+  // A real ball merged with its own cast shadow (not a second ball) is a
+  // distinct failure mode from a genuine touching pair, and the checks above
+  // do not tell them apart: a shadow lobe can easily be round enough and
+  // "expected-radius"-sized enough to pass both. What it cannot do is be
+  // anywhere near as *bright* as an actually-lit ball surface — every real
+  // ball colour sampled elsewhere in this pipeline sits north of ~200 on its
+  // brightest channel, while a shadow on blue cloth measured in the wild here
+  // came in at 79. Two genuinely different touching balls (even white next to
+  // a darker red) are never anywhere close to a 2x brightness gap the way a
+  // ball-vs-its-own-shadow pair is, so this stays a safe, purely *relative*
+  // comparison within this one blob rather than a hand-tuned absolute cutoff.
+  if (found.length >= 2) {
+    const brightest = Math.max(...found.map((c) => Math.max(...c.rgb)));
+    for (let i = found.length - 1; i >= 0; i--) {
+      if (Math.max(...found[i].rgb) < brightest * 0.5) found.splice(i, 1);
+    }
+  }
+
   // Two "circles" whose centres are implausibly close are the same physical
-  // ball found twice — common right at the accumulator threshold. Keep only
-  // the higher-scoring one of any such pair.
+  // ball found twice, not two touching balls — this is the check that
+  // actually tells them apart (see `minDist`'s doc above for why Hough's own
+  // distance-only parameter is kept too low to do this safely by itself). A
+  // real duplicate fit of one ball measured ~1.2x its expected radius apart
+  // in a real photo; a genuinely touching pair's *apparent* separation
+  // measured as low as ~1.4x in an oblique synthetic render. 1.3x sits
+  // between those two observations — narrow, and worth revisiting once more
+  // real photos exist, but scored (not distance-only) dedup is what makes
+  // that workable at all: keep only the higher-scoring, colour-validated one
+  // of any such pair.
   found.sort((a, b) => b.score - a.score);
   const deduped: BallCandidate[] = [];
   for (const c of found) {
-    if (deduped.some((d) => distance(d.center, c.center) < Math.min(c.expectedRadiusPx, d.expectedRadiusPx))) {
+    if (
+      deduped.some(
+        (d) => distance(d.center, c.center) < 1.3 * Math.min(c.expectedRadiusPx, d.expectedRadiusPx)
+      )
+    ) {
       continue;
     }
     deduped.push(c);
